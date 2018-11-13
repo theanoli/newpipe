@@ -25,6 +25,7 @@
 // For throughput experiments: time to wait before
 // starting measurements
 #define DEBUG 0
+#define STARTUP 2
 #define WARMUP 3
 #define COOLDOWN 5
 
@@ -84,17 +85,11 @@ struct threadargs
     int     nrtts; 
     int     no_record;
 
-    // char    *r_ptr;        /* Pointer to current location in receive buffer */
-    // char    *s_ptr;        /* Pointer to current location in send buffer    */
-    char    rbuff[PSIZE + 1];  /* Receive buffer                                */
-    char    sbuff[PSIZE + 1];  /* Send buffer                                   */
-
     int     bufflen;       /* Length of transmitted buffer                  */
 
     char    *lbuff;          /* For saving latency measurements */
 
     // for throughput measurements
-    int     online_wait;    /* How long to wait for clients to come up      */
     uint64_t counter;       /* For counting packets!                        */
     double  duration;       /* Measured time over which packets are blasted */
     int ep;                 /* For epoll file descriptor                    */
@@ -115,16 +110,12 @@ struct programargs
     char *  machineid;      /* Machine id */
     int     latency;        /* Measure latency (1) or throughput (0)        */
     int     expduration;    /* How long to count packets                    */
-    int     online_wait;    /* Tput: how long to wait for clients to come up */
     char    *host;          /* Name of receiving host                       */
     short   port;
     int     collect_stats;  /* Collect stats on resource usage              */
-    int     tr;         /* Transmit and Recv flags, or maybe neither    */
+    int     tr;             /* Is this a client? */ 
     int     nthreads;       /* How many threads to launch                   */
     int     no_record;      /* Flag: record results or not                  */
-    int     nrtts; 
-
-    char    sbuff[PSIZE + 1];   /* Tput: the string that will be sent       */
 
     char    *outdir;
     char    *outfile;

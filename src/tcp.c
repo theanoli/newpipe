@@ -13,24 +13,6 @@ tcp_accept_helper (int ep, int sockid, struct sockaddr *addr, socklen_t *addrlen
     event.events = EPOLLIN;
     event.data.fd = sockid;
 
-    if (epoll_ctl (ep, EPOLL_CTL_ADD, sockid, &event) == -1) {
-        perror ("epoll_ctl 1");
-        return -1;
-    }
-
-    while (1) {
-        nevents = epoll_wait (ep, events, MAXEVENTS, -1);
-        if (nevents < 0) {
-            if (errno != EINTR) {
-                perror ("accept: epoll_wait");
-            }
-            return -1;
-        }
-
-        for (i = 0; i < nevents; i++) {
-            if (events[i].data.fd == sockid) {
-                // New connection incoming...
-                epoll_ctl (ep, EPOLL_CTL_DEL, sockid, NULL);  // event is ignored
                 return accept (sockid, addr, addrlen);
             } else {
                 return -1;
@@ -84,12 +66,9 @@ LaunchThreads (ProgramArgs *p)
         }
         targs[i].host = p->host;
         targs[i].tr = p->tr;
-        targs[i].nrtts = p->nrtts;
-        targs[i].online_wait = p->online_wait;
         targs[i].latency = p->latency;
         targs[i].ncli = p->ncli;
         targs[i].ep = -1;
-        memcpy (targs[i].sbuff, p->sbuff, PSIZE + 1);
 
         if (!p->no_record) {
             setup_filenames (&targs[i]);
@@ -119,182 +98,28 @@ void *
 ThreadEntry (void *vargp)
 {
     ThreadArgs *targs = (ThreadArgs *)vargp;
-    if (targs->latency) {
-        // Latency: tr should send timestamped packets, srv should
-        // echo them back and then clean up
-        Setup (targs);
+    Setup (targs);
 
-        if (targs->tr) {
-            TimestampTxRx (targs);
-        } else {
-            Echo (targs);
-            CleanUp (targs);
-        }
+    if (targs->tr) {
+        TimestampTxRx (targs);
     } else {
-        // Throughput: tr should send simple packets, srv should
-        // echo them back and then record how many were sent per-thread
-        ThroughputSetup (targs);
+        Echo (targs);
 
-        if (targs->tr) {
-            SimpleTxRx (targs);
-        } else {
-            Echo (targs);
+        printf ("\n++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+        printf ("%s Received %" PRIu64 " packets in %f seconds\n", 
+                    targs->threadname, targs->counter, targs->duration);
+        printf ("Throughput is %f pps\n", targs->counter/targs->duration);
+        printf ("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
 
-            printf ("\n++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
-            printf ("%s Received %" PRIu64 " packets in %f seconds\n", 
-                        targs->threadname, targs->counter, targs->duration);
-            printf ("Throughput is %f pps\n", targs->counter/targs->duration);
-            printf ("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
-
-            targs->pps = targs->counter/targs->duration;
-            if (targs->tput_outfile != NULL) {
-                record_throughput (targs);
-            }
-
-            CleanUp (targs);
+        targs->pps = targs->counter/targs->duration;
+        if (targs->tput_outfile != NULL) {
+            record_throughput (targs);
         }
+
+        CleanUp (targs);
     }
 
     return 0;
-}
-
-
-// Initialize connections: create socket, bind, listen (in establish)
-// Also creates epoll instance
-void
-Setup (ThreadArgs *p)
-{
-    int sockfd; 
-    struct sockaddr_in *lsin1, *lsin2;
-    char *host;
-    
-    struct addrinfo hints;
-    struct addrinfo *result, *rp;
-    int socket_family = AF_INET;
-    int s;
-    char portno[7]; 
-
-    struct protoent *proto;
-    int flags;
-
-    host = p->host;
-    sprintf (portno, "%d", p->port);
-    flags = SOCK_STREAM;
-
-    // To resolve a hostname
-    memset (&hints, 0, sizeof (struct addrinfo));
-    hints.ai_family     = socket_family;
-    hints.ai_socktype   = flags;
-
-    lsin1 = &(p->prot.sin1);
-    lsin2 = &(p->prot.sin2);
-    
-    memset ((char *) lsin1, 0, sizeof (*lsin1));
-    memset ((char *) lsin2, 0, sizeof (*lsin2));
-    
-    p->ep = epoll_create (MAXEVENTS);
-
-    if (!p->tr) {
-        flags |= SOCK_NONBLOCK;
-    } 
-
-    if (!(proto = getprotobyname ("tcp"))) {
-        printf ("tester: protocol 'tcp' unknown!\n");
-        exit (555);
-    }
-
-    if (p->tr) {
-        s = getaddrinfo (host, portno, &hints, &result);
-        if (s != 0) {
-            perror ("getaddrinfo");
-            exit (-10);
-        }
-
-        for (rp = result; rp != NULL; rp = rp->ai_next) {
-            sockfd = socket (rp->ai_family, rp->ai_socktype,
-                    rp->ai_protocol);
-            if (sockfd == -1) {
-                continue;
-            }
-
-            if (connect (sockfd, rp->ai_addr, rp->ai_addrlen) == -1) {
-                perror ("connect");
-                close (sockfd);
-                continue;
-            }
-            
-            break;
-        }
-
-        if (rp == NULL) {
-            printf ("Invalid address %s and/or portno %s! Exiting...\n", host, portno);
-            exit (-10);
-        }
-
-        freeaddrinfo (result);
-        lsin1->sin_port = htons (p->port);
-        p->commfd = sockfd;
-
-    } else {
-        if ((sockfd = socket (socket_family, flags, 0)) < 0) {
-            printf ("tester: can't open stream socket!\n");
-            exit (-4);
-        }
-
-        int enable = 1;
-        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
-            printf ("tester: server: SO_REUSEADDR failed! errno=%d\n", errno);
-            exit (-7);
-        }
-        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)) < 0) {
-            printf ("tester: server: SO_REUSEPORT failed! errno=%d\n", errno);
-            exit (-7);
-        }
-
-        memset ((char *) lsin1, 0, sizeof (*lsin1));
-        lsin1->sin_family       = AF_INET;
-        lsin1->sin_addr.s_addr  = htonl (INADDR_ANY);
-        lsin1->sin_port         = htons (p->port);
-
-        if (bind (sockfd, (struct sockaddr *) lsin1, sizeof (*lsin1)) < 0) {
-            printf("%s bind to %s:%d failed: %s", __func__, inet_ntoa(lsin1->sin_addr), ntohs(lsin1->sin_port), strerror(errno));
-            printf ("tester: server: bind on local address failed! errno=%d\n", errno);
-            exit (-6);
-        }
-
-        p->servicefd = sockfd;
-    }
-
-    establish (p);
-}
-
-
-void
-SimpleTxRx (ThreadArgs *p)
-{
-    int n; 
-
-    while (p->program_state != experiment) {
-        // spin
-    }
-
-    while (1) {
-        n = write (p->commfd, p->sbuff, PSIZE);
-
-        if (n < 0) {
-            printf ("Client %d error: ", p->threadid);
-            perror ("write to server");
-            exit (1);
-        }
-
-        n = read (p->commfd, p->rbuff, PSIZE);
-
-        if (n < 0) {
-            printf ("%s error: ", p->threadname);
-            perror ("read from server");
-            exit (1);
-        }
-    }
 }
 
 
@@ -310,12 +135,14 @@ TimestampTxRx (ThreadArgs *p)
     struct timespec sendtime, recvtime;
     FILE *out;
 
+    // Short buffer for storing timestamps that will be written to file
     p->lbuff = malloc (PSIZE * 2);
     if (p->lbuff == NULL) {
         fprintf (stderr, "Malloc for lbuff failed!\n");
         exit (1);
     }
 
+    // Open file for recording latency data
     if (p->tr && !p->no_record) {
         if ((out = fopen (p->latency_outfile, "wb")) == NULL) {
             fprintf (stderr, "Can't open %s for output!\n", p->latency_outfile);
@@ -327,7 +154,7 @@ TimestampTxRx (ThreadArgs *p)
 
     printf ("[%s] Getting ready to send from thread %d, ", p->machineid, i);
     for (i = 0; i < p->nrtts; i++) {
-        sendtime = When2 ();
+        sendtime = PreciseWhen ();
         snprintf (pbuffer, PSIZE, "%lld,%.9ld%-31s",
                 (long long) sendtime.tv_sec, sendtime.tv_nsec, ",");
 
@@ -347,7 +174,7 @@ TimestampTxRx (ThreadArgs *p)
             exit (1);
         }
 
-        recvtime = When2 ();        
+        recvtime = PreciseWhen ();        
 
         if ((!p->no_record) && (count % 100 == 0)) {
             memset (p->lbuff, 0, PSIZE * 2);
@@ -372,24 +199,6 @@ Echo (ThreadArgs *p)
     // Start counting packets after a few seconds to stabilize connection(s)
     int j, n, i, done;
     struct epoll_event events[MAXEVENTS];
-
-    if (p->latency) {
-        // We only have one client; add it to the events list
-        struct epoll_event event;
-
-        if (setsock_nonblock (p->commfd) < 0) {
-            printf ("Error setting socket to non-blocking!\n");
-            exit (1);
-        }
-        
-        event.events = EPOLLIN;
-        event.data.fd = p->commfd;
-
-        if (epoll_ctl (p->ep, EPOLL_CTL_ADD, p->commfd, &event) == -1) {
-            perror ("epoll_ctl");
-            exit (1);
-        }
-    }
 
     p->counter = 0;
 
@@ -617,7 +426,7 @@ throughput_establish (ThreadArgs *p)
         t0 = When ();
         printf ("\tStarting loop to wait for connections...\n");
 
-        while ((duration = (t0 + (p->online_wait + 5)) - When ()) > 0) {
+        while (p->program_state == startup) {
             if ((connections == p->ncli) && report_connections)  {
                 printf ("OMGLSDJF:LDSKJF:LDSKJF:DLSFJ Got all the connections...\n");
                 report_connections = 0;
@@ -687,41 +496,6 @@ throughput_establish (ThreadArgs *p)
     }
 
     printf ("Setup complete... getting ready to start experiment\n");
-}
-
-
-void
-establish (ThreadArgs *p)
-{
-    socklen_t clen;
-    struct protoent *proto;
-
-    clen = (socklen_t) sizeof (p->prot.sin2);
-
-    if (!p->tr) {
-        listen (p->servicefd, 1024);
-        p->commfd = tcp_accept_helper (p->ep, p->servicefd,     
-                                (struct sockaddr *) &(p->prot.sin2), &clen);
-        if (p->commfd < 0) {
-            printf ("%s Socket error!\n", p->threadname);
-            exit (1);
-        }
-        while (p->commfd < 0 && errno == EAGAIN) {
-            p->commfd = tcp_accept_helper (p->ep, p->servicefd,     
-                                (struct sockaddr *) &(p->prot.sin2), &clen);
-        }
-
-        if (p->commfd < 0) {
-            printf ("Server: accept failed! errno=%d\n", errno);
-            perror ("accept");
-            exit (-12);
-        }
-
-        if (!(proto = getprotobyname ("tcp"))) {
-            printf ("unknown protocol!\n");
-            exit (555);
-        }
-    }
 }
 
 

@@ -22,7 +22,6 @@ main (int argc, char **argv)
 
     /* Initialize vars that may change from default due to arguments */
     sleep_interval = 0;
-    args.nrtts = NRTTS;
     args.latency = 1;  // Default to do latency; this is arbitrary
     args.no_record = 0;
 
@@ -43,7 +42,8 @@ main (int argc, char **argv)
     args.port = DEFPORT;  // The first port; if more than one server thread, 
                           // will need to open DEFPORT + 1, ... 
 
-    printf ("In the client program!\n");
+    args.program_state = startup;
+
     /* Parse the arguments. See Usage for description */
     while ((c = getopt (argc, argv, "o:d:H:T:r:c:P:ps:tu:lw:h")) != -1)
     {
@@ -67,9 +67,6 @@ main (int argc, char **argv)
             case 'T': args.nthreads = atoi (optarg);
                       break;
 
-            case 'r': args.nrtts = atoi (optarg);
-                      break;
-
             // Overloading to be #clients (for server) and #servers for (clients)
     	    case 'c': args.ncli = atoi (optarg);
 		              break;
@@ -81,9 +78,6 @@ main (int argc, char **argv)
                       break;
 
             case 'u': args.expduration = atoi (optarg);
-                      break;
-
-            case 'w': args.online_wait = atoi (optarg);  // How long to wait for clients to come up
                       break;
 
             case 'l': args.collect_stats = 1;
@@ -102,58 +96,34 @@ main (int argc, char **argv)
     printf ("[%s] Initializing...\n", args.machineid);
     Init (&args, &argc, &argv);   
 
-    /* FOR LATENCY */
-    if (args.latency) {
-        // Start up all threads; server should wait a bit for clients to
-        // come up and then start the experiment
-        LaunchThreads (&args);
-        if (args.tr) {
-            sleep (args.online_wait);    
-            printf ("Assuming all clients have come online!");
-            printf (" Entering experiment phase...\n");
-            UpdateProgramState (experiment);
-        }
+    /* Spin up the specified number of threads, set up network connections */
+    LaunchThreads (&args);
+
+    if (args.tr) {
+        // Clients
+        sleep (1);  // TODO why is this needed?
+        UpdateProgramState (experiment); // start sending
 
     } else {
-        /* FOR THROUGHPUT */
+        // Servers
+        // Wait a few seconds to let clients come online
+        printf ("Waiting for clients to start up...\n");
+        sleep (STARTUP);
 
-        // Create the string that will be echoed
-        char *abcs = "abcdefghijklmnopqrstuvwxyz";
-        for (i = 0; i < PSIZE; i++) {
-            args.sbuff[i] = abcs[i % strlen (abcs)];
-        }
-        args.sbuff[PSIZE] = '\0';
-        printf ("Garbage string: %s\n", args.sbuff);
+        printf ("Assuming all clients have come online!");
+        printf (" Entering warmup period...\n");
+        UpdateProgramState (warmup);
+        sleep (WARMUP);
+        
+        printf ("Starting counting packets...\n");
+        UpdateProgramState (experiment);
+        sleep (args.expduration);
 
-        /* Spin up the specified number of threads, set up network connections */
-        LaunchThreads (&args);
+        printf ("Experiment over, stopping counting packets...\n");
+        UpdateProgramState (cooldown);
+        sleep (COOLDOWN);
 
-        // Get throughput measurements
-        if (args.tr) {
-            // Set program state to "experiment" so threads can start sending
-            sleep (1);
-            UpdateProgramState (experiment);
-
-        } else {
-            // Wait a few seconds to let clients come online
-            printf ("Waiting for clients to start up...\n");
-            sleep (args.online_wait);
-
-            printf ("Assuming all clients have come online!");
-            printf (" Entering warmup period...\n");
-            UpdateProgramState (warmup);
-            sleep (WARMUP);
-            
-            printf ("Starting counting packets for throughput...\n");
-            UpdateProgramState (experiment);
-            sleep (args.expduration);
-
-            printf ("Experiment over, stopping counting packets...\n");
-            UpdateProgramState (cooldown);
-            sleep (COOLDOWN);
-
-            UpdateProgramState (end);
-        }
+        UpdateProgramState (end);
     }
 
     for (i = 0; i < args.nthreads; i++) {
@@ -365,7 +335,7 @@ When (void)
 
 
 struct timespec
-When2 (void)
+PreciseWhen (void)
 {
     // More precise timestamping function; uses machine time instead of
     // clock time to avoid sync issues

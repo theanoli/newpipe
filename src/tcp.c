@@ -2,10 +2,6 @@
 
 #include <sys/epoll.h>
 
-#define DEBUG 0
-#define WARMUP 3
-#define COOLDOWN 5
-
 int
 tcp_accept_helper (int ep, int sockid, struct sockaddr *addr, socklen_t *addrlen)
 {
@@ -95,9 +91,7 @@ LaunchThreads (ProgramArgs *p)
         targs[i].ep = -1;
         memcpy (targs[i].sbuff, p->sbuff, PSIZE + 1);
 
-        if (args.no_record) {
-            targs[i].outfile = NULL;
-        } else
+        if (!p->no_record) {
             setup_filenames (&targs[i]);
         }
 
@@ -106,6 +100,7 @@ LaunchThreads (ProgramArgs *p)
 
         pthread_create (&p->tids[i], NULL, ThreadEntry, (void *)&targs[i]);
         
+        // Always pin cores
         // This is fragile; better to get available cores programmatically
         // instead of using hardcoded macro value NSERVERCORES
         CPU_ZERO (&cpuset);
@@ -119,43 +114,30 @@ LaunchThreads (ProgramArgs *p)
 }
 
 
-// Entry point for new threads
+// Entry point for new threads. Actually do the work.
 void *
 ThreadEntry (void *vargp)
 {
     ThreadArgs *targs = (ThreadArgs *)vargp;
-    // This is a client
     if (targs->latency) {
+        // Latency: tr should send timestamped packets, srv should
+        // echo them back and then clean up
         Setup (targs);
+
         if (targs->tr) {
-            TimestampWrite (targs);
+            TimestampTxRx (targs);
         } else {
             Echo (targs);
+            CleanUp (targs);
         }
     } else {
+        // Throughput: tr should send simple packets, srv should
+        // echo them back and then record how many were sent per-thread
+        ThroughputSetup (targs);
+
         if (targs->tr) {
-
+            SimpleTxRx (targs);
         } else {
-
-        }
-    }
-
-    if (targs->tr) {
-        if (targs->latency) {
-            Setup (targs);
-            TimestampWrite (targs);
-        } else {
-            ThroughputSetup (targs);
-            SimpleRxTx (targs);
-        }
-        
-    // This is a server
-    } else {
-        if (targs->latency) {
-            Setup (targs);
-            Echo (targs);
-        } else {
-            ThroughputSetup (targs);
             Echo (targs);
 
             printf ("\n++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
@@ -169,20 +151,19 @@ ThreadEntry (void *vargp)
                 record_throughput (targs);
             }
 
+            CleanUp (targs);
         }
-
-        CleanUp (targs);
     }
 
     return 0;
 }
 
 
+// Initialize connections: create socket, bind, listen (in establish)
+// Also creates epoll instance
 void
 Setup (ThreadArgs *p)
 {
-    // Initialize connections: create socket, bind, listen (in establish)
-    // Also creates epoll instance
     int sockfd; 
     struct sockaddr_in *lsin1, *lsin2;
     char *host;
@@ -289,7 +270,7 @@ Setup (ThreadArgs *p)
 
 
 void
-SimpleRxTx (ThreadArgs *p)
+SimpleTxRx (ThreadArgs *p)
 {
     int n; 
 
@@ -317,59 +298,15 @@ SimpleRxTx (ThreadArgs *p)
 }
 
 
-void
-SimpleRx (ThreadArgs *p)
-{
-    int n; 
-
-    while (p->program_state != experiment) {
-    }
-
-    while (1) {
-        n = read (p->commfd, p->rbuff, PSIZE);
-
-        if (n < 0) {
-            printf ("%s error: ", p->threadname);
-            perror ("read from server");
-            exit (1);
-        }
-    }
-}
-
-
-// This will be spawned in a different thread
-void *
-SimpleTx (void *vargp)
-{
-    ThreadArgs *p = (ThreadArgs *)vargp;
-    int n;
-    
-    while (p->program_state != experiment) {
-
-    }
-
-    while (1) {
-        n = write (p->commfd, p->sbuff, PSIZE);
-
-        if (n < 0) {
-            printf ("Client %d error: ", p->threadid);
-            perror ("write to server");
-            exit (1);
-        }
-    }
-
-    return 0;
-}
-
-
 void 
-TimestampWrite (ThreadArgs *p)
+TimestampTxRx (ThreadArgs *p)
 {
     // Send and then receive an echoed timestamp.
     // Return a pointer to the stored timestamp. 
     char pbuffer[PSIZE];  // for packets
     int n, m;
     int i;
+    uint64_t count = 0;  // packet counter for sampling
     struct timespec sendtime, recvtime;
     FILE *out;
 
@@ -409,18 +346,21 @@ TimestampWrite (ThreadArgs *p)
             perror ("read");
             exit (1);
         }
+
         recvtime = When2 ();        
 
-        memset (p->lbuff, 0, PSIZE * 2);
-        m = snprintf (p->lbuff, PSIZE, "%s", pbuffer);
-        snprintf (p->lbuff + m, PSIZE, "%lld,%.9ld\n", 
-                (long long) recvtime.tv_sec, recvtime.tv_nsec);
+        if ((!p->no_record) && (count % 100 == 0)) {
+            memset (p->lbuff, 0, PSIZE * 2);
+            m = snprintf (p->lbuff, PSIZE, "%s", pbuffer);
+            snprintf (p->lbuff + m, PSIZE, "%lld,%.9ld\n", 
+                    (long long) recvtime.tv_sec, recvtime.tv_nsec);
 
-        if (!p->no_record) {
             fwrite (p->lbuff, strlen (p->lbuff), 1, out);
         }
+
         debug_print (DEBUG, "Got timestamp: %s, %d bytes read\n", pbuffer, n);
     }
+
 }
 
 
@@ -820,76 +760,3 @@ setsock_nonblock (int fd)
 }
 
 
-/* Obsolete functions? */
-/*
-int
-tcp_read_helper (int sockid, char *buf, int len)
-{
-    int nevents, i;
-    struct epoll_event events[MAXEVENTS];
-    struct epoll_event event;
-
-    event.events = EPOLLIN;
-    event.data.fd = sockid;
-    if (epoll_ctl (p->ep, EPOLL_CTL_ADD, sockid, &event) == -1) {
-        perror ("epoll_ctl 2");
-        exit (1);
-    }
-
-    while (1) {
-        nevents = epoll_wait (p->ep, events, MAXEVENTS, -1);
-        if (nevents < 0) {
-            if (errno != EINTR) {
-                perror ("epoll_wait");
-            }
-            exit (1);
-        }
-
-        for (i = 0; i < nevents; i++) {
-            if (events[i].data.fd == sockid) {
-                epoll_ctl (p->ep, EPOLL_CTL_DEL, sockid, NULL);
-                return read (sockid, buf, len);
-            } else {
-                printf ("Socket error!\n");
-                exit (1);
-            }
-        }
-    }
-}
-        
-
-int
-tcp_write_helper (int sockid, char *buf, int len)
-{
-    int nevents, i;
-    struct epoll_event events[MAXEVENTS];
-    struct epoll_event event;
-
-    event.events = EPOLLOUT;
-    event.data.fd = sockid;
-    if (epoll_ctl (p->ep, EPOLL_CTL_ADD, sockid, &event) == -1) {
-        perror ("epoll_ctl 3");
-        exit (1);
-    }
-
-    while (1) {
-        nevents = epoll_wait (p->ep, events, MAXEVENTS, -1);
-        if (nevents < 0) {
-            if (errno != EINTR) {
-                perror ("epoll_wait");
-            }
-            exit (1);
-        }
-
-        for (i = 0; i < nevents; i++) {
-            if (events[i].data.fd == sockid) {
-                epoll_ctl (p->ep, EPOLL_CTL_DEL, sockid, NULL);
-                return write (sockid, buf, len);
-            } else {
-                printf ("Socket error!\n");
-                exit (1);
-            }
-        }
-    }
-}
-*/

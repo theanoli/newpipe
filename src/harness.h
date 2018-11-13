@@ -18,14 +18,13 @@
 #include <unistd.h> 
 
 #define PSIZE   32
-#define NTHREADS 32
-#define NSERVERCORES 32
+#define NSERVERCORES 16
 #define DEFPORT 8000
-#define EXPDURATION 10
 #define MAXEVENTS 8192
 
 // For throughput experiments: time to wait before
 // starting measurements
+#define DEBUG 0
 #define WARMUP 3
 #define COOLDOWN 5
 
@@ -66,6 +65,7 @@ typedef struct threadargs ThreadArgs;
 struct threadargs 
 {
     /* This is the common information that is needed for all tests           */
+    int     tr;         /* Transmit and Recv flags, or maybe neither    */
     char *  machineid; /* Machine ID   */ 
     int     threadid;       /* The thread number                            */
     char    threadname[128];    /* MachineID.threadID for printing          */
@@ -162,10 +162,10 @@ char *RecvData (ThreadArgs *p);
 void SimpleWrite (ThreadArgs *p);
 void LaunchThreads (ProgramArgs *p);
 void *ThreadEntry (void *vargp);
-void SimpleRxTx (ThreadArgs *p);
+void SimpleTxRx (ThreadArgs *p);
 void SimpleRx (ThreadArgs *p);
 void *SimpleTx (void *vargp);
-void TimestampWrite (ThreadArgs *p);
+void TimestampTxRx (ThreadArgs *p);
 void Echo (ThreadArgs *p);
 void CleanUp(ThreadArgs *p);
 void PrintUsage();

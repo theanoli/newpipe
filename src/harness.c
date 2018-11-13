@@ -292,7 +292,7 @@ CollectStats (ProgramArgs *p)
         char outfile[128];
         
         snprintf (nsamples, 128, "-c%d", p->expduration);
-        snprintf (outfile, 128, "%s/%s-collectl", p->outdir, p->outfile_base);
+        snprintf (outfile, 128, "%s/%s-collectl", p->outdir, p->outfile);
 
         // else save results to file
         char *argv[8];

@@ -100,8 +100,8 @@ main (int argc, char **argv)
     LaunchThreads (&args);
 
     if (args.tr) {
-        // Clients
-        sleep (1);  // TODO why is this needed?
+        // Clients (experiment launcher is responsible for waiting long enough
+        // for the server threads to start before trying to connect
         UpdateProgramState (experiment); // start sending
 
     } else {

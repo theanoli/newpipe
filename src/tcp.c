@@ -2,26 +2,6 @@
 
 #include <sys/epoll.h>
 
-int
-tcp_accept_helper (int ep, int sockid, struct sockaddr *addr, socklen_t *addrlen)
-{
-    // Accept incoming connections on the listening socket
-    int nevents, i;
-    struct epoll_event events[MAXEVENTS];
-    struct epoll_event event;
-
-    event.events = EPOLLIN;
-    event.data.fd = sockid;
-
-                return accept (sockid, addr, addrlen);
-            } else {
-                return -1;
-            }
-        }
-    }
-}
-
-
 void
 Init (ProgramArgs *p, int *pargc, char ***pargv)
 {
@@ -242,11 +222,12 @@ Echo (ThreadArgs *p)
                 done = 0;
                 int to_write;
                 int written;
+                char rcv_buf[PSIZE];
                 char *q;
 
-                // This is dangerous because p->rbuff is only PSIZE bytes long
+                // This is dangerous because rcv_buf is only PSIZE bytes long
                 // TODO figure this out
-                q = p->rbuff;
+                q = rcv_buf;
 
                 while ((j = read (events[i].data.fd, q, PSIZE)) > 0) {
                     q += j;
@@ -259,11 +240,11 @@ Echo (ThreadArgs *p)
                     done = 1;  // Close this socket
                 } else {
                     // We've read all the data; echo it back to the client
-                    to_write = q - p->rbuff;
+                    to_write = q - rcv_buf;
                     written = 0;
                     
                     while ((j = write (events[i].data.fd, 
-                                    p->rbuff + written, to_write) + written) < to_write) {
+                                    rcv_buf + written, to_write) + written) < to_write) {
                         if (j < 0) {
                             if (errno != EAGAIN) {
                                 perror ("server write");
@@ -293,7 +274,7 @@ Echo (ThreadArgs *p)
 
 
 void
-ThroughputSetup (ThreadArgs *p)
+Setup (ThreadArgs *p)
 {
     int sockfd; 
     struct sockaddr_in *lsin1, *lsin2;
@@ -393,12 +374,12 @@ ThroughputSetup (ThreadArgs *p)
         p->servicefd = sockfd;
     }
 
-    throughput_establish (p);    
+    establish (p);    
 }
 
 
 void
-throughput_establish (ThreadArgs *p)
+establish (ThreadArgs *p)
 {
     // TODO this FD needs to get added to an epoll instance
     socklen_t clen;
@@ -413,6 +394,7 @@ throughput_establish (ThreadArgs *p)
     clen = (socklen_t) sizeof (p->prot.sin2);
     
     if (!p->tr) {
+        // Server waits for incoming connections
         event.events = EPOLLIN;
         event.data.fd = p->servicefd;
 
@@ -423,12 +405,14 @@ throughput_establish (ThreadArgs *p)
 
         listen (p->servicefd, 1024);
 
-        t0 = When ();
         printf ("\tStarting loop to wait for connections...\n");
 
+        t0 = When ();
         while (p->program_state == startup) {
+            duration = STARTUP - When () - t0;
+            printf ("%f seconds left in startup...\n", duration);
             if ((connections == p->ncli) && report_connections)  {
-                printf ("OMGLSDJF:LDSKJF:LDSKJF:DLSFJ Got all the connections...\n");
+                printf ("++++++Got all the connections...\n");
                 report_connections = 0;
             }
 

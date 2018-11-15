@@ -10,22 +10,23 @@
 #include <stdio.h>
 #include <stdlib.h> 
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/sysinfo.h>
 #include <sys/types.h>
 #include <sys/time.h> 
 #include <time.h>
 #include <unistd.h> 
 
 #define PSIZE   32
-#define NSERVERCORES 16
 #define DEFPORT 8000
 #define MAXEVENTS 8192
 
 // For throughput experiments: time to wait before
 // starting measurements
 #define DEBUG 0
-#define STARTUP 2
+#define STARTUP 5
 #define WARMUP 3
 #define COOLDOWN 5
 
@@ -66,9 +67,9 @@ typedef struct threadargs ThreadArgs;
 struct threadargs 
 {
     /* This is the common information that is needed for all tests           */
-    int     tr;         /* Transmit and Recv flags, or maybe neither    */
+    uint8_t     tr;         /* Transmit and Recv flags, or maybe neither    */
     char *  machineid; /* Machine ID   */ 
-    int     threadid;       /* The thread number                            */
+    uint16_t     threadid;       /* The thread number                            */
     char    threadname[128];    /* MachineID.threadID for printing          */
 
     int     servicefd,     /* File descriptor of the network socket         */
@@ -79,15 +80,13 @@ struct threadargs
     char    *host;          /* Name of receiving host                       */
     char    tput_outfile[512];
     char    latency_outfile[512];       /* Where results go to die                      */
-    int     latency;        /* 1 if this is a latency experiment            */
-    int     ncli;           /* #server threads if tr; #client threads per 
+    uint8_t     latency;        /* 1 if this is a latency experiment            */
+    uint16_t     ncli;           /* #server threads if tr; #client threads per 
                                server thread if rcv                         */
-    int     nrtts; 
-    int     no_record;
+    uint32_t     nrtts; 
+    uint8_t     no_record;
 
     int     bufflen;       /* Length of transmitted buffer                  */
-
-    char    *lbuff;          /* For saving latency measurements */
 
     // for throughput measurements
     uint64_t counter;       /* For counting packets!                        */
@@ -99,7 +98,7 @@ struct threadargs
     volatile ProgramState program_state;
     double t0;
     double pps;
-    int tput_done;
+    uint8_t tput_done;
 
 };
 
@@ -140,6 +139,7 @@ struct data
 
 void InterruptThreads ();
 void UpdateProgramState (ProgramState state);
+void UpdateCommFds ();
 double When ();
 struct timespec PreciseWhen ();
 void Init (ProgramArgs *p, int* argc, char*** argv);

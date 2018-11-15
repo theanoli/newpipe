@@ -45,7 +45,7 @@ main (int argc, char **argv)
     args.program_state = startup;
 
     /* Parse the arguments. See Usage for description */
-    while ((c = getopt (argc, argv, "o:d:H:T:r:c:P:ps:tu:lw:h")) != -1)
+    while ((c = getopt (argc, argv, "no:d:H:T:c:P:tu:l")) != -1)
     {
         switch (c)
         {
@@ -83,11 +83,8 @@ main (int argc, char **argv)
             case 'l': args.collect_stats = 1;
                       break; 
 
-            case 'h': PrintUsage ();
-                      exit (0);
-
             default: 
-                     PrintUsage (); 
+                     printf ("Got unrecognized option: %c. Exiting!\n", c);
                      exit (-12);
        }
     }
@@ -102,16 +99,18 @@ main (int argc, char **argv)
     if (args.tr) {
         // Clients (experiment launcher is responsible for waiting long enough
         // for the server threads to start before trying to connect
+        sleep (STARTUP);
         UpdateProgramState (experiment); // start sending
 
     } else {
         // Servers
         // Wait a few seconds to let clients come online
-        printf ("Waiting for clients to start up...\n");
+        printf ("Waiting for clients to start up and connect...\n");
         sleep (STARTUP);
 
-        printf ("Assuming all clients have come online!");
-        printf (" Entering warmup period...\n");
+        printf ("Entering warmup period...\n");
+        // Send the commfd around to other server threads
+        UpdateCommFds ();
         UpdateProgramState (warmup);
         sleep (WARMUP);
         
@@ -166,6 +165,17 @@ UpdateProgramState (ProgramState state)
     }
 }
 
+
+void 
+UpdateCommFds (void)
+{
+    int i;
+    int commfd = args.thread_data[0].commfd;
+
+    for (i = 1; i < args.nthreads; i++) {
+        args.thread_data[i].commfd = commfd;
+    }
+}
 
 void
 setup_filenames (ThreadArgs *targs)
@@ -224,29 +234,6 @@ debug_print (int debug_id, const char *format, ...)
         vfprintf (stdout, format, valist);
         va_end (valist);
     }
-}
-
-
-void
-PrintUsage (void)
-{
-    printf ("\n");
-    printf ("To run server, run '[sudo] ./NPxyz'\n");
-    printf ("To run client, run '[sudo] ./NPxyz -H server-hostname ...'\n");
-    printf ("(mTCP is the only transport that needs sudo [for now])\n\n");
-    printf ("Options (client only unless otherwise specified):\n");
-    printf ("\t-o\twhere to write latency output; default\n"
-            "\t\tresults/timestamp+opts\n");
-    printf ("\t-H\tIP/hostname of receiver\n");
-    printf ("\t-r\tnumber of latency measurements to collect\n"
-            "\t\t(ping packets to send); default 1000\n");
-    printf ("\t-P\t(client AND server) port number, default 8000\n");
-    printf ("\t-s\tsleeptime for throttling client send rate\n"
-            "(default 0)\n");
-    printf ("\t-t\tmeasure throughput (default latency)\n");
-    printf ("\t-h\t(client or server) print usage\n");
-    printf ("\n");
-    exit (0);
 }
 
 

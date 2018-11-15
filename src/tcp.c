@@ -1,21 +1,20 @@
 #include "harness.h"
 
-#include <sys/epoll.h>
 
 void
-Init (ProgramArgs *p, int *pargc, char ***pargv)
+Init (ProgramArgs *pargs, int *pargc, char ***pargv)
 {
-    ThreadArgs *targs = (ThreadArgs *)calloc (p->nthreads, 
+    ThreadArgs *p = (ThreadArgs *)calloc (pargs->nthreads, 
             sizeof (ThreadArgs));
 
-    if (targs == NULL) {
+    if (p == NULL) {
         printf ("Error malloc'ing space for thread args!\n");
         exit (-10);
     }
-    p->thread_data = targs;
+    pargs->thread_data = p;
 
-    p->tids = (pthread_t *)calloc (p->nthreads, sizeof (pthread_t));
-    if (p->tids == NULL) {
+    pargs->tids = (pthread_t *)calloc (pargs->nthreads, sizeof (pthread_t));
+    if (pargs->tids == NULL) {
         printf ("Failed to malloc space for tids!\n");
         exit (-82);
     }
@@ -23,50 +22,59 @@ Init (ProgramArgs *p, int *pargc, char ***pargv)
 
 
 void
-LaunchThreads (ProgramArgs *p)
+LaunchThreads (ProgramArgs *pargs)
 {
     int i, ret;
-    cpu_set_t cpuset __attribute__((__unused__));
+    int nprocs_onln;
+    cpu_set_t cpuset;
 
-    ThreadArgs *targs = p->thread_data;
+    ThreadArgs *targs = pargs->thread_data;
 
-    for (i = 0; i < p->nthreads; i++) {
-        targs[i].machineid = p->machineid;
+    for (i = 0; i < pargs->nthreads; i++) {
+        targs[i].machineid = pargs->machineid;
         targs[i].threadid = i;
-        snprintf (targs[i].threadname, 128, "[%s.%d]", p->machineid, i);
+        snprintf (targs[i].threadname, 128, "[%s.%d]", pargs->machineid, i);
 
-        if (p->tr) {
-            // E.g., if there are 8 server threads but only 4 cores, and 16
-            // client threads, then want to cycle through portnos 8000-8003 only.
-            // If there are 2 server threads with 4 cores, and 16 client threads, 
-            // cycle through portnos 8000-8001 only.
-            targs[i].port = p->port + i % p->ncli % NSERVERCORES; 
-        } else {
-            targs[i].port = p->port + i % NSERVERCORES;
-        }
-        targs[i].host = p->host;
-        targs[i].tr = p->tr;
-        targs[i].latency = p->latency;
-        targs[i].ncli = p->ncli;
+        // if (pargs->tr) {
+        //     // E.g., if there are 8 server threads but only 4 cores, and 16
+        //     // client threads, then want to cycle through portnos 8000-8003 only.
+        //     // If there are 2 server threads with 4 cores, and 16 client threads, 
+        //     // cycle through portnos 8000-8001 only.
+        //     targs[i].port = pargs->port + i % pargs->ncli % NSERVERCORES; 
+        // } else {
+        //     targs[i].port = pargs->port + i % NSERVERCORES;
+        // }
+        targs[i].port = pargs->port;
+        targs[i].host = pargs->host;
+        targs[i].tr = pargs->tr;
+        targs[i].latency = pargs->latency;
+
+        // For servers, this is how many clients from which to expect connections.
+        // For clients, this is how many total server threads there are. 
+        targs[i].ncli = pargs->ncli;
         targs[i].ep = -1;
+        targs[i].no_record = pargs->no_record;
 
-        if (!p->no_record) {
+        if (pargs->no_record) {
+            printf ("Not recording measurements to file.\n");
+        } else {    
             setup_filenames (&targs[i]);
         }
 
-        printf ("[%s] Launching thread %d, ", p->machineid, i);
+        printf ("[%s] Launching thread %d, ", pargs->machineid, i);
         printf ("connecting to portno %d\n", targs[i].port);
 
-        pthread_create (&p->tids[i], NULL, ThreadEntry, (void *)&targs[i]);
+        pthread_create (&pargs->tids[i], NULL, ThreadEntry, (void *)&targs[i]);
         
         // Always pin cores
         // This is fragile; better to get available cores programmatically
         // instead of using hardcoded macro value NSERVERCORES
+        nprocs_onln = get_nprocs ();
         CPU_ZERO (&cpuset);
-        CPU_SET (i % NSERVERCORES, &cpuset);
-        ret = pthread_setaffinity_np (p->tids[i], sizeof (cpu_set_t), &cpuset);
+        CPU_SET (i % nprocs_onln, &cpuset);
+        ret = pthread_setaffinity_np (pargs->tids[i], sizeof (cpu_set_t), &cpuset);
         if (ret != 0) {
-            printf ("[%s] Couldn't pin thread %d to core!\n", p->machineid, i);
+            printf ("[%s] Couldn't pin thread %d to core!\n", pargs->machineid, i);
             exit (-14);
         }
     }
@@ -77,26 +85,30 @@ LaunchThreads (ProgramArgs *p)
 void *
 ThreadEntry (void *vargp)
 {
-    ThreadArgs *targs = (ThreadArgs *)vargp;
-    Setup (targs);
-
-    if (targs->tr) {
-        TimestampTxRx (targs);
+    ThreadArgs *p = (ThreadArgs *)vargp;
+    
+    if (p->tr) {
+        Setup (p);
+        TimestampTxRx (p);
     } else {
-        Echo (targs);
+        if (p->threadid == 0) {
+            Setup (p);
+        }
+
+        Echo (p);
 
         printf ("\n++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
         printf ("%s Received %" PRIu64 " packets in %f seconds\n", 
-                    targs->threadname, targs->counter, targs->duration);
-        printf ("Throughput is %f pps\n", targs->counter/targs->duration);
+                    p->threadname, p->counter, p->duration);
+        printf ("Throughput is %f pps\n", p->counter/p->duration);
         printf ("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
 
-        targs->pps = targs->counter/targs->duration;
-        if (targs->tput_outfile != NULL) {
-            record_throughput (targs);
+        p->pps = p->counter/p->duration;
+        if (!p->no_record) {
+            record_throughput (p);
         }
 
-        CleanUp (targs);
+        CleanUp (p);
     }
 
     return 0;
@@ -108,22 +120,16 @@ TimestampTxRx (ThreadArgs *p)
 {
     // Send and then receive an echoed timestamp.
     // Return a pointer to the stored timestamp. 
-    char pbuffer[PSIZE];  // for packets
+    char pbuf[PSIZE];  // for packets
+    char wbuf[PSIZE * 2];  // for send,rcv time, to write to file
     int n, m;
     int i;
     uint64_t count = 0;  // packet counter for sampling
     struct timespec sendtime, recvtime;
     FILE *out;
 
-    // Short buffer for storing timestamps that will be written to file
-    p->lbuff = malloc (PSIZE * 2);
-    if (p->lbuff == NULL) {
-        fprintf (stderr, "Malloc for lbuff failed!\n");
-        exit (1);
-    }
-
     // Open file for recording latency data
-    if (p->tr && !p->no_record) {
+    if (p->tr && (!p->no_record)) {
         if ((out = fopen (p->latency_outfile, "wb")) == NULL) {
             fprintf (stderr, "Can't open %s for output!\n", p->latency_outfile);
             exit (1);
@@ -135,20 +141,20 @@ TimestampTxRx (ThreadArgs *p)
     printf ("[%s] Getting ready to send from thread %d, ", p->machineid, i);
     for (i = 0; i < p->nrtts; i++) {
         sendtime = PreciseWhen ();
-        snprintf (pbuffer, PSIZE, "%lld,%.9ld%-31s",
+        snprintf (pbuf, PSIZE, "%lld,%.9ld%-31s",
                 (long long) sendtime.tv_sec, sendtime.tv_nsec, ",");
 
-        n = write (p->commfd, pbuffer, PSIZE - 1);
+        n = write (p->commfd, pbuf, PSIZE - 1);
         if (n < 0) {
             perror ("write");
             exit (1);
         }
 
-        debug_print (DEBUG, "pbuffer: %s, %d bytes written\n", pbuffer, n);
+        debug_print (DEBUG, "pbuf: %s, %d bytes written\n", pbuf, n);
 
-        memset (pbuffer, 0, PSIZE);
+        memset (pbuf, 0, PSIZE);
         
-        n = read (p->commfd, pbuffer, PSIZE);
+        n = read (p->commfd, pbuf, PSIZE);
         if (n < 0) {
             perror ("read");
             exit (1);
@@ -157,15 +163,15 @@ TimestampTxRx (ThreadArgs *p)
         recvtime = PreciseWhen ();        
 
         if ((!p->no_record) && (count % 100 == 0)) {
-            memset (p->lbuff, 0, PSIZE * 2);
-            m = snprintf (p->lbuff, PSIZE, "%s", pbuffer);
-            snprintf (p->lbuff + m, PSIZE, "%lld,%.9ld\n", 
+            memset (wbuf, 0, PSIZE * 2);
+            m = snprintf (wbuf, PSIZE, "%s", pbuf);
+            snprintf (wbuf + m, PSIZE, "%lld,%.9ld\n", 
                     (long long) recvtime.tv_sec, recvtime.tv_nsec);
 
-            fwrite (p->lbuff, strlen (p->lbuff), 1, out);
+            fwrite (wbuf, strlen (wbuf), 1, out);
         }
 
-        debug_print (DEBUG, "Got timestamp: %s, %d bytes read\n", pbuffer, n);
+        debug_print (DEBUG, "Got timestamp: %s, %d bytes read\n", pbuf, n);
     }
 
 }
@@ -184,6 +190,8 @@ Echo (ThreadArgs *p)
 
     // Add a few-second delay to let the clients stabilize
     while (p->program_state == startup) {
+        // Should never be in this status in this function, 
+        // but just in case...
         // sppppiiiinnnnnn
     }
 
@@ -318,7 +326,7 @@ Setup (ThreadArgs *p)
     if (p->tr) {
         s = getaddrinfo (host, portno, &hints, &result);
         if (s != 0) {
-            perror ("getaddrinfo");
+            printf ("%s\n", gai_strerror (s)); 
             exit (-10);
         }
 
@@ -409,8 +417,7 @@ establish (ThreadArgs *p)
 
         t0 = When ();
         while (p->program_state == startup) {
-            duration = STARTUP - When () - t0;
-            printf ("%f seconds left in startup...\n", duration);
+            duration = STARTUP - (When() - t0);
             if ((connections == p->ncli) && report_connections)  {
                 printf ("++++++Got all the connections...\n");
                 report_connections = 0;

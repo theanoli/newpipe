@@ -11,7 +11,6 @@ import shlex
 import subprocess
 import time
 
-wait_multiplier = 0
 
 class Experiment(object):
     def __init__(self, args):
@@ -23,15 +22,13 @@ class Experiment(object):
         self.server_addr = args.server_addr
         self.nclient_threads = args.nclient_threads
         self.nclient_machines = args.nclient_machines
-        self.nservers = args.nservers
+        self.nserver_threads = args.nserver_threads
         self.start_port = args.start_port
         self.wdir = args.wdir
 
         self.outfile = args.outfile
         self.outdir = args.outdir
 
-        self.online_wait = args.online_wait
-        self.wait_multiplier = args.wait_multiplier
         self.no_collect_stats = args.no_collect_stats
         self.expduration = args.expduration
         self.no_pin_procs = args.no_pin_procs
@@ -52,8 +49,6 @@ class Experiment(object):
 
         if self.do_tput:
             self.basecmd += " -t"
-        else:
-            self.expduration = 100000 # some arbitrarily large number
 
         self.printer("Number of client threads: %d" % 
                 (self.nclient_threads * len(self.clients)))
@@ -118,21 +113,17 @@ class Experiment(object):
 
         serv_cmd = (self.basecmd +
                 # -c should be the per-server thread #clients
-                " -c %d" % (self.total_clients/self.nservers) +  
+                " -c %d" % (self.total_clients/self.nserver_threads) +  
                 " -P %d" % self.start_port +
-                " -w %d" % self.online_wait +
                 " -d %s" % self.outdir + 
                 " -o %s" % self.outfile +
                 " -u %d" % self.expduration + 
-                " -T %d" % self.nservers)
-        if not self.no_pin_procs: 
-            serv_cmd += " -p"
+                " -T %d" % self.nserver_threads)
         if not self.no_collect_stats:
             serv_cmd += " -l"
         cmd = shlex.split(serv_cmd)
         self.printer("Launching server process: %s" % serv_cmd)
         server = subprocess.Popen(cmd)
-
         return server
 
     def launch_clients(self):
@@ -143,7 +134,7 @@ class Experiment(object):
 
         for client in self.clients:
             cmd = (self.basecmd + 
-                    " -c %d" % self.nservers + 
+                    " -c %d" % self.nserver_threads + 
                     " -H %s" % self.server_addr +
                     " -d %s" % self.outdir + 
                     " -o %s" % self.outfile +
@@ -176,13 +167,13 @@ if __name__ == "__main__":
     parser.add_argument('--nclient_threads',
             type=int,
             help=('Number of client threads to run per client machine. '
-                'Default 1.'),
-            default=1)
+                'Default 256.'),
+            default=256)
     parser.add_argument('--nclient_machines',
             type=int,
             help=("Number of client machines to launch. Default 1."),
             default=1)
-    parser.add_argument('--nservers',
+    parser.add_argument('--nserver_threads',
             type=int,
             help='Number of server threads to run. Default 1.',
             default=1)
@@ -191,21 +182,11 @@ if __name__ == "__main__":
             help='Base port number. Default 8000.',
             default=8000)
     parser.add_argument('--wdir', 
-            help='Working directory. Default /proj/sequencer/tsch/mininetpipe.',
-            default='/proj/sequencer/tsch/mininetpipe')
+            help='Working directory. Default /proj/sequencer/tsch/newpipe.',
+            default='/proj/sequencer/tsch/newpipe')
     parser.add_argument('--outdir',
             help=('Directory to write results to.'),
             default=None)
-    parser.add_argument('--online_wait',
-            help=('Time to wait for clients to come online. Default '
-                'is %f times the total number of clients.' % wait_multiplier),
-            type=int,
-            default=0)
-    parser.add_argument('--wait_multiplier',
-            help=('Multiplier for how long to wait for clients to come '
-                'online. Default is %f.' % wait_multiplier),
-            type=float,
-            default=wait_multiplier)
     parser.add_argument('--no_collect_stats',
             help=('Collect stats about CPU usage.'),
             action='store_true')
@@ -227,7 +208,7 @@ if __name__ == "__main__":
     experiment.printer("Running experiment!")
     experiment.kill_zombie_processes()
     server = experiment.launch_servers()
-    time.sleep(2)
+    time.sleep(1)
     clients = experiment.launch_clients()
     for p in clients:
             p.wait()

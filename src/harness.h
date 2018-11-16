@@ -29,6 +29,7 @@
 #define STARTUP 5
 #define WARMUP 3
 #define COOLDOWN 5
+#define READTO 2  // Pretty big but don't want to exit unnecessarily
 
 // TCP-specific
 #if defined(TCP)
@@ -72,8 +73,8 @@ struct threadargs
     uint16_t     threadid;       /* The thread number                            */
     char    threadname[128];    /* MachineID.threadID for printing          */
 
-    int     servicefd,     /* File descriptor of the network socket         */
-            commfd;        /* Communication file descriptor                 */
+    int     servicefd;     /* File descriptor of the network socket         */
+    int        commfd;        /* Communication file descriptor                 */
     short   port;          /* Port used for connection                      */
     ProtocolStruct prot;   /* Protocol-depended stuff                       */
 
@@ -91,7 +92,7 @@ struct threadargs
     // for throughput measurements
     uint64_t counter;       /* For counting packets!                        */
     double  duration;       /* Measured time over which packets are blasted */
-    int ep;                 /* For epoll file descriptor                    */
+    volatile int ep;                 /* For epoll file descriptor                    */
     uint64_t retransmits;   /* Only useful for unreliable transports        */
 
     // timer data 
@@ -139,7 +140,7 @@ struct data
 
 void InterruptThreads ();
 void UpdateProgramState (ProgramState state);
-void UpdateCommFds ();
+void UpdateEpFds ();
 double When ();
 struct timespec PreciseWhen ();
 void Init (ProgramArgs *p, int* argc, char*** argv);
@@ -157,5 +158,6 @@ void SignalHandler (int signum);
 void CollectStats (ProgramArgs *p);
 int getopt( int argc, char * const argv[], const char *optstring);
 void setup_filenames (ThreadArgs *targs);
-void record_throughput (ThreadArgs *targs);
-void debug_print (int debug_id, const char *format, ...);
+void record_throughput ();
+void debug_print (ThreadArgs *p, int debug_id, const char *format, ...);
+void id_print (ThreadArgs *p, const char *format, ...);

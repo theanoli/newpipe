@@ -63,6 +63,7 @@ LaunchThreads (ProgramArgs *pargs)
 
         printf ("[%s] Launching thread %d, ", pargs->machineid, i);
         printf ("connecting to portno %d\n", targs[i].port);
+        fflush (stdout);
 
         pthread_create (&pargs->tids[i], NULL, ThreadEntry, (void *)&targs[i]);
         
@@ -102,11 +103,9 @@ ThreadEntry (void *vargp)
                     p->threadname, p->counter, p->duration);
         printf ("Throughput is %f pps\n", p->counter/p->duration);
         printf ("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+        fflush (stdout);
 
         p->pps = p->counter/p->duration;
-        if (!p->no_record) {
-            record_throughput (p);
-        }
 
         CleanUp (p);
     }
@@ -123,7 +122,6 @@ TimestampTxRx (ThreadArgs *p)
     char pbuf[PSIZE];  // for packets
     char wbuf[PSIZE * 2];  // for send,rcv time, to write to file
     int n, m;
-    int i;
     uint64_t count = 0;  // packet counter for sampling
     struct timespec sendtime, recvtime;
     FILE *out;
@@ -138,25 +136,29 @@ TimestampTxRx (ThreadArgs *p)
         out = stdout;
     }
 
-    printf ("[%s] Getting ready to send from thread %d, ", p->machineid, i);
-    for (i = 0; i < p->nrtts; i++) {
+    while (p->program_state != experiment) {
+    }
+    
+    // id_print (p, "Getting ready to send from thread %d\n", p->threadid);
+
+    while (p->program_state == experiment) {
         sendtime = PreciseWhen ();
         snprintf (pbuf, PSIZE, "%lld,%.9ld%-31s",
                 (long long) sendtime.tv_sec, sendtime.tv_nsec, ",");
 
         n = write (p->commfd, pbuf, PSIZE - 1);
         if (n < 0) {
-            perror ("write");
+            perror ("client write");
             exit (1);
         }
 
-        debug_print (DEBUG, "pbuf: %s, %d bytes written\n", pbuf, n);
+        debug_print (p, DEBUG, "pbuf: %s, %d bytes written\n", pbuf, n);
 
         memset (pbuf, 0, PSIZE);
         
         n = read (p->commfd, pbuf, PSIZE);
         if (n < 0) {
-            perror ("read");
+            perror ("client read");
             exit (1);
         }
 
@@ -171,9 +173,8 @@ TimestampTxRx (ThreadArgs *p)
             fwrite (wbuf, strlen (wbuf), 1, out);
         }
 
-        debug_print (DEBUG, "Got timestamp: %s, %d bytes read\n", pbuf, n);
+        debug_print (p, DEBUG, "Got timestamp: %s, %d bytes read\n", pbuf, n);
     }
-
 }
 
 
@@ -195,7 +196,7 @@ Echo (ThreadArgs *p)
         // sppppiiiinnnnnn
     }
 
-    printf ("%s Entering packet receive mode...\n", p->threadname);
+    id_print (p, "Entering packet receive mode...\n");
 
     while (p->program_state != end) {
         n = epoll_wait (p->ep, events, MAXEVENTS, 1);
@@ -207,7 +208,7 @@ Echo (ThreadArgs *p)
             // exit (1);
         }
         
-        debug_print (DEBUG, "Got %d events\n", n);
+        debug_print (p, DEBUG, "Got %d events\n", n);
 
         for (i = 0; i < n; i++) {
             // Check for errors
@@ -349,6 +350,14 @@ Setup (ThreadArgs *p)
             exit (-10);
         }
 
+        struct timeval tv;
+        tv.tv_sec = READTO;
+        tv.tv_usec = 0;
+        if (setsockopt (sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv) < 0) {
+            printf ("tester: client: SO_RCVTIMEO failed! errno=%d\n", errno);
+            exit (-7);
+        }
+        
         freeaddrinfo (result);
         lsin1->sin_port = htons (p->port);
         p->commfd = sockfd;
@@ -360,11 +369,11 @@ Setup (ThreadArgs *p)
         }
 
         int enable = 1;
-        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
+        if (setsockopt (sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
             printf ("tester: server: SO_REUSEADDR failed! errno=%d\n", errno);
             exit (-7);
         }
-        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)) < 0) {
+        if (setsockopt (sockfd, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)) < 0) {
             printf ("tester: server: SO_REUSEPORT failed! errno=%d\n", errno);
             exit (-7);
         }
@@ -397,7 +406,6 @@ establish (ThreadArgs *p)
     struct epoll_event event;
     double t0, duration;
     int connections = 0;
-    int report_connections = 1; 
 
     clen = (socklen_t) sizeof (p->prot.sin2);
     
@@ -413,15 +421,11 @@ establish (ThreadArgs *p)
 
         listen (p->servicefd, 1024);
 
-        printf ("\tStarting loop to wait for connections...\n");
+        id_print (p, "Starting loop to wait for connections...\n");
 
         t0 = When ();
         while (p->program_state == startup) {
             duration = STARTUP - (When() - t0);
-            if ((connections == p->ncli) && report_connections)  {
-                printf ("++++++Got all the connections...\n");
-                report_connections = 0;
-            }
 
             nevents = epoll_wait (p->ep, events, MAXEVENTS, duration); 
             if (nevents < 0) {
@@ -484,9 +488,10 @@ establish (ThreadArgs *p)
 
         // Record the actual number of successful connections
         p->ncli = connections;
+        id_print (p, "Got %d connections\n", connections);
     }
 
-    printf ("Setup complete... getting ready to start experiment\n");
+    // id_print (p, "Setup complete... getting ready to start experiment\n");
 }
 
 

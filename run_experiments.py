@@ -91,7 +91,7 @@ class Experiment(object):
             iface = fields[2]
             mac = fields[3]
 
-            if "server" in machinename:
+            if "proxy" in machinename:
                 servers.append(machinename)
             else:
                 clients.append(machinename)
@@ -105,9 +105,9 @@ class Experiment(object):
         f.close()
         return machines, sorted(clients), sorted(servers)
 
-    def launch_servers(self):
+    def launch_server(self):
         # Launch the server-side program and then wait a bit 
-        self.printer("Launching servers...")
+        self.printer("Launching server...")
         
         os.chdir(self.wdir)
 
@@ -207,10 +207,9 @@ if __name__ == "__main__":
     experiment = Experiment(args)
     experiment.printer("Running experiment!")
     experiment.kill_zombie_processes()
-    server = experiment.launch_servers()
+    server = experiment.launch_server()
     time.sleep(1)
     clients = experiment.launch_clients()
-    for p in clients:
-            p.wait()
+    server.wait()
     experiment.printer("Completed experiment!")
 

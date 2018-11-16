@@ -16,12 +16,9 @@ FILE *out;          /* Output data file                          */
 int 
 main (int argc, char **argv)
 {
-    int sleep_interval __attribute__((__unused__)); /* How long to sleep b/t latency pings (usec) */
-
     int c, i;
 
     /* Initialize vars that may change from default due to arguments */
-    sleep_interval = 0;
     args.latency = 1;  // Default to do latency; this is arbitrary
     args.no_record = 0;
 
@@ -101,6 +98,8 @@ main (int argc, char **argv)
         // for the server threads to start before trying to connect
         sleep (STARTUP);
         UpdateProgramState (experiment); // start sending
+        sleep (WARMUP + args.expduration + COOLDOWN + 3);
+        UpdateProgramState (end);
 
     } else {
         // Servers
@@ -110,7 +109,7 @@ main (int argc, char **argv)
 
         printf ("Entering warmup period...\n");
         // Send the commfd around to other server threads
-        UpdateCommFds ();
+        UpdateEpFds ();
         UpdateProgramState (warmup);
         sleep (WARMUP);
         
@@ -123,6 +122,10 @@ main (int argc, char **argv)
         sleep (COOLDOWN);
 
         UpdateProgramState (end);
+       
+        if (!args.no_record) {
+           record_throughput ();
+        } 
     }
 
     for (i = 0; i < args.nthreads; i++) {
@@ -167,13 +170,14 @@ UpdateProgramState (ProgramState state)
 
 
 void 
-UpdateCommFds (void)
+UpdateEpFds (void)
 {
     int i;
-    int commfd = args.thread_data[0].commfd;
+    int ep = args.thread_data[0].ep;
+    printf ("Updating everyone to ep %d\n", ep);
 
     for (i = 1; i < args.nthreads; i++) {
-        args.thread_data[i].commfd = commfd;
+        args.thread_data[i].ep = ep;
     }
 }
 
@@ -196,46 +200,69 @@ setup_filenames (ThreadArgs *targs)
     memcpy (targs->latency_outfile, s, 512);
     memcpy (targs->tput_outfile, s2, 512);
 
-    printf ("Results going into file");
+    id_print (targs, "Results going into file");
     printf (" %s\n", targs->latency ? targs->latency_outfile : targs->tput_outfile);
+    fflush (stdout);
 }
 
 
 void
-record_throughput (ThreadArgs *targs)
+record_throughput (void)
 {
     // Currently this doesn't do anything if there is an error opening
     // the fd or writing to the file. TODO do we care?
-    int tputfd = open (targs->tput_outfile, O_CREAT | O_RDWR,
-            S_IRWXU | S_IRWXG | S_IRWXO);
-    if (tputfd < 0) {
+    int i;
+    float total_tput = 0.0;
+    FILE *out;
+    char buf[20];
+    int n; 
+
+    if ((out = fopen (args.thread_data[0].tput_outfile, "wb")) == NULL) {
         fprintf (stderr, "Can't open throughput file for output!\n");
         return;
     }
 
-    char buf[20];
-    memset (buf, '\n', 20);
-    snprintf (buf, 20, "%f\n", targs->pps);
-    int ret = pwrite (tputfd, buf, 20, 20 * targs->threadid);
-    if (ret < 0) {
-        perror ("throughput write: ");
+    for (i = 0; i < args.nthreads; i++) {
+        memset (buf, 0, 20);
+        snprintf (buf, 20, "%f\n", args.thread_data[i].pps);
+        n = fwrite (buf, strlen (buf), 1, out);
+        if (n < strlen (buf)) {
+            printf ("Error writing throughput to file!\n");
+        }
+        total_tput += args.thread_data[i].pps;
     }
 
-    close (tputfd);
+    printf ("***Total throughput: %f***\n", total_tput);
+    fclose (out);
+    fflush (stdout);
 }
 
 
 void
-debug_print (int debug_id, const char *format, ...)
+debug_print (ThreadArgs *p, int debug_id, const char *format, ...)
 {
     if (debug_id) {
         va_list valist; 
         va_start (valist, format);
+        if (p != NULL) {
+            printf ("%s ", p->threadname);
+        }
         vfprintf (stdout, format, valist);
         va_end (valist);
+        fflush (stdout);
     }
 }
 
+void
+id_print (ThreadArgs *p, const char *format, ...)
+{
+    va_list valist;
+    va_start (valist, format);
+    printf ("%s ", p->threadname);
+    vfprintf (stdout, format, valist);
+    va_end (valist);
+    fflush (stdout);
+}
 
 void
 CollectStats (ProgramArgs *p)

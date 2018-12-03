@@ -35,15 +35,7 @@ LaunchThreads (ProgramArgs *pargs)
         targs[i].threadid = i;
         snprintf (targs[i].threadname, 128, "[%s.%d]", pargs->machineid, i);
 
-        // if (pargs->tr) {
-        //     // E.g., if there are 8 server threads but only 4 cores, and 16
-        //     // client threads, then want to cycle through portnos 8000-8003 only.
-        //     // If there are 2 server threads with 4 cores, and 16 client threads, 
-        //     // cycle through portnos 8000-8001 only.
-        //     targs[i].port = pargs->port + i % pargs->ncli % NSERVERCORES; 
-        // } else {
-        //     targs[i].port = pargs->port + i % NSERVERCORES;
-        // }
+        // All clients will connect to the same server port
         targs[i].port = pargs->port;
         targs[i].host = pargs->host;
         targs[i].tr = pargs->tr;
@@ -68,8 +60,6 @@ LaunchThreads (ProgramArgs *pargs)
         pthread_create (&pargs->tids[i], NULL, ThreadEntry, (void *)&targs[i]);
         
         // Always pin cores
-        // This is fragile; better to get available cores programmatically
-        // instead of using hardcoded macro value NSERVERCORES
         nprocs_onln = get_nprocs ();
         CPU_ZERO (&cpuset);
         CPU_SET (i % nprocs_onln, &cpuset);
@@ -139,8 +129,8 @@ TimestampTxRx (ThreadArgs *p)
     while (p->program_state != experiment) {
     }
     
-    // id_print (p, "Getting ready to send from thread %d\n", p->threadid);
-
+    // Client will be immediately put into experiment mode after 
+    // startup phase
     while (p->program_state == experiment) {
         sendtime = PreciseWhen ();
         snprintf (pbuf, PSIZE, "%lld,%.9ld%-31s",
@@ -182,8 +172,6 @@ void
 Echo (ThreadArgs *p)
 {
     // Server-side only!
-    // Loop through for expduration seconds and count each packet you send out
-    // Start counting packets after a few seconds to stabilize connection(s)
     int j, n, i, done;
     struct epoll_event events[MAXEVENTS];
 
@@ -389,9 +377,9 @@ Setup (ThreadArgs *p)
         }
 
         p->servicefd = sockfd;
-    }
 
-    establish (p);    
+        establish (p);    
+    }
 }
 
 
@@ -409,89 +397,85 @@ establish (ThreadArgs *p)
 
     clen = (socklen_t) sizeof (p->prot.sin2);
     
-    if (!p->tr) {
-        // Server waits for incoming connections
-        event.events = EPOLLIN;
-        event.data.fd = p->servicefd;
+    // Server waits for incoming connections
+    event.events = EPOLLIN;
+    event.data.fd = p->servicefd;
 
-        if (epoll_ctl (p->ep, EPOLL_CTL_ADD, p->servicefd, &event) == -1) {
-            perror ("epoll_ctl");
+    if (epoll_ctl (p->ep, EPOLL_CTL_ADD, p->servicefd, &event) == -1) {
+        perror ("epoll_ctl");
+        exit (1);
+    }
+
+    listen (p->servicefd, 1024);
+
+    id_print (p, "Starting loop to wait for connections...\n");
+
+    t0 = When ();
+    while (p->program_state == startup) {
+        duration = STARTUP - (When() - t0);
+
+        nevents = epoll_wait (p->ep, events, MAXEVENTS, duration); 
+        if (nevents < 0) {
+            if (errno != EINTR) {
+                perror ("establish: epoll_wait");
+            }
             exit (1);
         }
 
-        listen (p->servicefd, 1024);
+        for (i = 0; i < nevents; i++) {
+            if (events[i].data.fd == p->servicefd) {
+                while (1) {
+                    char hostbuf[NI_MAXHOST], portbuf[NI_MAXSERV];
+                    
+                    p->commfd = accept (p->servicefd, 
+                            (struct sockaddr *) &(p->prot.sin2), &clen);
 
-        id_print (p, "Starting loop to wait for connections...\n");
-
-        t0 = When ();
-        while (p->program_state == startup) {
-            duration = STARTUP - (When() - t0);
-
-            nevents = epoll_wait (p->ep, events, MAXEVENTS, duration); 
-            if (nevents < 0) {
-                if (errno != EINTR) {
-                    perror ("establish: epoll_wait");
-                }
-                exit (1);
-            }
-
-            for (i = 0; i < nevents; i++) {
-                if (events[i].data.fd == p->servicefd) {
-                    while (1) {
-                        char hostbuf[NI_MAXHOST], portbuf[NI_MAXSERV];
-                        
-                        p->commfd = accept (p->servicefd, 
-                                (struct sockaddr *) &(p->prot.sin2), &clen);
-
-                        if (p->commfd == -1) {
-                           if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
-                               break;
-                           } else {
-                               perror ("accept");
-                               break;
-                           }
-                        }
-
-                        getnameinfo ((struct sockaddr *) &p->prot.sin2, 
-                                clen, hostbuf, sizeof (hostbuf),
-                                portbuf, sizeof (portbuf),
-                                NI_NUMERICHOST | NI_NUMERICSERV);
-                                            
-                        if (!(proto = getprotobyname ("tcp"))) {
-                            printf ("unknown protocol!\n");
-                            exit (555);
-                        }
-
-                        // Set socket to nonblocking
-                        if (setsock_nonblock (p->commfd) < 0) {
-                            printf ("Error setting socket to non-blocking!\n");
-                            continue;
-                        }
-
-                        // Add descriptor to epoll instance
-                        event.data.fd = p->commfd;
-                        event.events = EPOLLIN;  // TODO check this
-
-                        if (epoll_ctl (p->ep, EPOLL_CTL_ADD, p->commfd, &event) < 0) {
-                            perror ("epoll_ctl");
-                            exit (1);
-                        }
-
-                        connections++;
-                        if (!(connections % 50)) {
-                            printf ("%d connections so far...\n", connections);
-                        }
+                    if (p->commfd == -1) {
+                       if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
+                           break;
+                       } else {
+                           perror ("accept");
+                           break;
+                       }
                     }
-                } 
-            }
-        }
 
-        // Record the actual number of successful connections
-        p->ncli = connections;
-        id_print (p, "Got %d connections\n", connections);
+                    getnameinfo ((struct sockaddr *) &p->prot.sin2, 
+                            clen, hostbuf, sizeof (hostbuf),
+                            portbuf, sizeof (portbuf),
+                            NI_NUMERICHOST | NI_NUMERICSERV);
+                                        
+                    if (!(proto = getprotobyname ("tcp"))) {
+                        printf ("unknown protocol!\n");
+                        exit (555);
+                    }
+
+                    // Set socket to nonblocking
+                    if (setsock_nonblock (p->commfd) < 0) {
+                        printf ("Error setting socket to non-blocking!\n");
+                        continue;
+                    }
+
+                    // Add descriptor to epoll instance
+                    event.data.fd = p->commfd;
+                    event.events = EPOLLIN;  // TODO check this
+
+                    if (epoll_ctl (p->ep, EPOLL_CTL_ADD, p->commfd, &event) < 0) {
+                        perror ("epoll_ctl");
+                        exit (1);
+                    }
+
+                    connections++;
+                    if (!(connections % 50)) {
+                        printf ("%d connections so far...\n", connections);
+                    }
+                }
+            } 
+        }
     }
 
-    // id_print (p, "Setup complete... getting ready to start experiment\n");
+    // Record the actual number of successful connections
+    p->ncli = connections;
+    id_print (p, "Got %d connections\n", connections);
 }
 
 

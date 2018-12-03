@@ -29,7 +29,7 @@ class Experiment(object):
         self.outfile = args.outfile
         self.outdir = args.outdir
 
-        self.no_collect_stats = args.no_collect_stats
+        self.collect_stats = args.collect_stats
         self.expduration = args.expduration
         self.no_pin_procs = args.no_pin_procs
 
@@ -91,7 +91,7 @@ class Experiment(object):
             iface = fields[2]
             mac = fields[3]
 
-            if "proxy" in machinename:
+            if "server" in machinename:
                 servers.append(machinename)
             else:
                 clients.append(machinename)
@@ -119,7 +119,7 @@ class Experiment(object):
                 " -o %s" % self.outfile +
                 " -u %d" % self.expduration + 
                 " -T %d" % self.nserver_threads)
-        if not self.no_collect_stats:
+        if self.collect_stats:
             serv_cmd += " -l"
         cmd = shlex.split(serv_cmd)
         self.printer("Launching server process: %s" % serv_cmd)
@@ -187,7 +187,7 @@ if __name__ == "__main__":
     parser.add_argument('--outdir',
             help=('Directory to write results to.'),
             default=None)
-    parser.add_argument('--no_collect_stats',
+    parser.add_argument('--collect_stats',
             help=('Collect stats about CPU usage.'),
             action='store_true')
     parser.add_argument('--expduration',

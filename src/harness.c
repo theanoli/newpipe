@@ -17,6 +17,7 @@ int
 main (int argc, char **argv)
 {
     int c, i;
+    pthread_t recorder_tid;
 
     /* Initialize vars that may change from default due to arguments */
     args.latency = 1;  // Default to do latency; this is arbitrary
@@ -36,8 +37,7 @@ main (int argc, char **argv)
 
     // Thread-specific arguments
     args.host = NULL;
-    args.port = DEFPORT;  // The first port; if more than one server thread, 
-                          // will need to open DEFPORT + 1, ... 
+    args.port = DEFPORT;
 
     args.program_state = startup;
 
@@ -93,9 +93,13 @@ main (int argc, char **argv)
     /* Spin up the specified number of threads, set up network connections */
     LaunchThreads (&args);
 
+    // Start a recorder thread
+    pthread_create (&recorder_tid, NULL, ThroughputRecorder, (void *)&args);
+
     if (args.tr) {
         // Clients (experiment launcher is responsible for waiting long enough
         // for the server threads to start before trying to connect
+        // During STARTUP, client threads will be connecting to the server.
         sleep (STARTUP);
         UpdateProgramState (experiment); // start sending
         sleep (WARMUP + args.expduration + COOLDOWN + 3);
@@ -122,17 +126,61 @@ main (int argc, char **argv)
         sleep (COOLDOWN);
 
         UpdateProgramState (end);
-       
-        if (!args.no_record) {
-           record_throughput ();
-        } 
     }
 
     for (i = 0; i < args.nthreads; i++) {
         pthread_join (args.tids[i], NULL);
     }
+    pthread_join (recorder_tid, NULL);
 
     return 0;
+}
+
+
+void *
+ThroughputRecorder (void *vargp)
+{
+    ProgramArgs *args = (ProgramArgs *)vargp;
+    
+    if ((out = fopen (args->thread_data[0].tput_outfile, "wb")) == NULL) {
+        fprintf (stderr, "Can't open throughput file for output!\n");
+        return NULL;
+    }
+
+    // Do this every (interval) seconds
+    while (args->program_state != end) {
+        record_throughput (args, out);
+        sleep (1);
+    }
+
+    fclose (out);
+
+    return 0;
+}
+
+
+void
+record_throughput (ProgramArgs *args, FILE *out)
+{
+    // Currently this doesn't do anything if there is an error opening
+    // the fd or writing to the file. TODO do we care?
+    int i;
+    uint64_t total_npackets = 0;
+    char buf[32];
+    int n; 
+    struct timespec now = PreciseWhen ();
+
+    for (i = 0; i < args->nthreads; i++) {
+        total_npackets += args->thread_data[i].counter;
+    }
+
+    memset (buf, 0, 32);
+    snprintf (buf, 32, "%lld,%.9ld,%"PRIu64"\n", (long long) now.tv_sec, 
+            now.tv_nsec, total_npackets);
+    n = fwrite (buf, strlen (buf), 1, out);
+    if (n < strlen (buf)) {
+        printf ("Error writing throughput to file!\n");
+    }
 }
 
 
@@ -185,55 +233,23 @@ void
 setup_filenames (ThreadArgs *targs)
 {
     // Caller is responsible for creating the directory
-    char s[512];
-    char s2[512];
+    char s[FNAME_BUF];
+    char s2[FNAME_BUF];
 
-    memset (&s, 0, 512);
-    memset (&s2, 0, 512);
-    memset (&targs->latency_outfile, 0, 512);
-    memset (&targs->tput_outfile, 0, 512);
+    memset (&s, 0, FNAME_BUF);
+    memset (&s2, 0, FNAME_BUF);
+    memset (&targs->latency_outfile, 0, FNAME_BUF);
+    memset (&targs->tput_outfile, 0, FNAME_BUF);
 
-    snprintf (s, 512, "%s/%s_%s.%d-latency.dat", args.outdir, args.outfile, args.machineid, 
+    snprintf (s, FNAME_BUF, "%s/%s_%s.%d-latency.dat", args.outdir, args.outfile, args.machineid, 
             targs->threadid);
-    snprintf (s2, 512, "%s/%s_%s-throughput.dat", args.outdir, args.outfile, args.machineid);
+    snprintf (s2, FNAME_BUF, "%s/%s_%s-throughput.dat", args.outdir, args.outfile, args.machineid);
 
-    memcpy (targs->latency_outfile, s, 512);
-    memcpy (targs->tput_outfile, s2, 512);
+    memcpy (targs->latency_outfile, s, FNAME_BUF);
+    memcpy (targs->tput_outfile, s2, FNAME_BUF);
 
     id_print (targs, "Results going into file");
     printf (" %s\n", targs->latency ? targs->latency_outfile : targs->tput_outfile);
-    fflush (stdout);
-}
-
-
-void
-record_throughput (void)
-{
-    // Currently this doesn't do anything if there is an error opening
-    // the fd or writing to the file. TODO do we care?
-    int i;
-    float total_tput = 0.0;
-    FILE *out;
-    char buf[20];
-    int n; 
-
-    if ((out = fopen (args.thread_data[0].tput_outfile, "wb")) == NULL) {
-        fprintf (stderr, "Can't open throughput file for output!\n");
-        return;
-    }
-
-    for (i = 0; i < args.nthreads; i++) {
-        memset (buf, 0, 20);
-        snprintf (buf, 20, "%f\n", args.thread_data[i].pps);
-        n = fwrite (buf, strlen (buf), 1, out);
-        if (n < strlen (buf)) {
-            printf ("Error writing throughput to file!\n");
-        }
-        total_tput += args.thread_data[i].pps;
-    }
-
-    printf ("***Total throughput: %f***\n", total_tput);
-    fclose (out);
     fflush (stdout);
 }
 
@@ -361,7 +377,7 @@ PreciseWhen (void)
 
 
 struct timespec
-diff (struct timespec start, struct timespec end)
+diff_timespecs (struct timespec start, struct timespec end)
 {
     struct timespec temp;
     if ((end.tv_nsec - start.tv_nsec) < 0) {

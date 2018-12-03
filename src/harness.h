@@ -22,6 +22,7 @@
 #define PSIZE   32
 #define DEFPORT 8000
 #define MAXEVENTS 8192
+#define FNAME_BUF 256
 
 // For throughput experiments: time to wait before
 // starting measurements
@@ -79,8 +80,8 @@ struct threadargs
     ProtocolStruct prot;   /* Protocol-depended stuff                       */
 
     char    *host;          /* Name of receiving host                       */
-    char    tput_outfile[512];
-    char    latency_outfile[512];       /* Where results go to die                      */
+    char    tput_outfile[FNAME_BUF];
+    char    latency_outfile[FNAME_BUF];       /* Where results go to die                      */
     uint8_t     latency;        /* 1 if this is a latency experiment            */
     uint16_t     ncli;           /* #server threads if tr; #client threads per 
                                server thread if rcv                         */
@@ -150,6 +151,7 @@ int setsock_nonblock (int fd);
 void SendData (ThreadArgs *p);
 void LaunchThreads (ProgramArgs *p);
 void *ThreadEntry (void *vargp);
+void *ThroughputRecorder (void *vargp);
 void TimestampTxRx (ThreadArgs *p);
 void Echo (ThreadArgs *p);
 void CleanUp (ThreadArgs *p);

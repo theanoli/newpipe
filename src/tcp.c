@@ -253,7 +253,7 @@ Echo (ThreadArgs *p)
                         printf ("Had to loop...\n");
                     }
 
-                    if ((p->program_state == experiment) && !done) {
+                    if (!done) {
                         (p->counter)++;
                     } 
                 }

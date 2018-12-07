@@ -72,38 +72,6 @@ LaunchThreads (ProgramArgs *pargs)
 }
 
 
-// Entry point for new threads. Actually do the work.
-void *
-ThreadEntry (void *vargp)
-{
-    ThreadArgs *p = (ThreadArgs *)vargp;
-    
-    if (p->tr) {
-        Setup (p);
-        TimestampTxRx (p);
-    } else {
-        if (p->threadid == 0) {
-            Setup (p);
-        }
-
-        Echo (p);
-
-        printf ("\n++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
-        printf ("%s Received %" PRIu64 " packets in %f seconds\n", 
-                    p->threadname, p->counter, p->duration);
-        printf ("Throughput is %f pps\n", p->counter/p->duration);
-        printf ("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
-        fflush (stdout);
-
-        p->pps = p->counter/p->duration;
-
-        CleanUp (p);
-    }
-
-    return 0;
-}
-
-
 void 
 TimestampTxRx (ThreadArgs *p)
 {

@@ -53,8 +53,8 @@ LaunchThreads (ProgramArgs *pargs)
             setup_filenames (&targs[i]);
         }
 
-        printf ("[%s] Launching thread %d, ", pargs->machineid, i);
-        printf ("connecting to portno %d\n", targs[i].port);
+        // printf ("[%s] Launching thread %d, ", pargs->machineid, i);
+        // printf ("connecting to portno %d\n", targs[i].port);
         fflush (stdout);
 
         pthread_create (&pargs->tids[i], NULL, ThreadEntry, (void *)&targs[i]);
@@ -101,8 +101,8 @@ TimestampTxRx (ThreadArgs *p)
     // startup phase
     while (p->program_state == experiment) {
         sendtime = PreciseWhen ();
-        snprintf (pbuf, PSIZE, "%lld,%.9ld%-31s",
-                (long long) sendtime.tv_sec, sendtime.tv_nsec, ",");
+        snprintf (pbuf, PSIZE, "%lld,%.9ld,",
+                (long long) sendtime.tv_sec, sendtime.tv_nsec);
 
         n = write (p->commfd, pbuf, PSIZE - 1);
         if (n < 0) {
@@ -450,8 +450,6 @@ establish (ThreadArgs *p)
 void
 CleanUp (ThreadArgs *p)
 {
-    printf ("%s Quitting!\n", p->threadname);
-   
     close (p->commfd);
 
     if (!p->tr) {

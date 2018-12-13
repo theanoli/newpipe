@@ -93,9 +93,6 @@ main (int argc, char **argv)
     /* Spin up the specified number of threads, set up network connections */
     LaunchThreads (&args);
 
-    // Start a recorder thread
-    pthread_create (&recorder_tid, NULL, ThroughputRecorder, (void *)&args);
-
     if (args.tr) {
         // Clients (experiment launcher is responsible for waiting long enough
         // for the server threads to start before trying to connect
@@ -107,6 +104,9 @@ main (int argc, char **argv)
 
     } else {
         // Servers
+        // Start a recorder thread for throughput
+        pthread_create (&recorder_tid, NULL, ThroughputRecorder, (void *)&args);
+
         // Wait a few seconds to let clients come online
         printf ("Waiting for clients to start up and connect...\n");
         sleep (STARTUP);
@@ -125,13 +125,14 @@ main (int argc, char **argv)
         UpdateProgramState (cooldown);
         sleep (COOLDOWN);
 
+        printf ("All done!\n");
         UpdateProgramState (end);
+        pthread_join (recorder_tid, NULL);
     }
 
     for (i = 0; i < args.nthreads; i++) {
         pthread_join (args.tids[i], NULL);
     }
-    pthread_join (recorder_tid, NULL);
 
     return 0;
 }
@@ -146,6 +147,8 @@ ThreadEntry (void *vargp)
     if (p->tr) {
         Setup (p);
         TimestampTxRx (p);
+        CleanUp (p);
+
     } else {
         if (p->threadid == 0) {
             Setup (p);
@@ -153,14 +156,9 @@ ThreadEntry (void *vargp)
 
         Echo (p);
 
-        printf ("\n++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
-        printf ("%s Received %" PRIu64 " packets in %f seconds\n", 
-                    p->threadname, p->counter, p->duration);
-        printf ("Throughput is %f pps\n", p->counter/p->duration);
-        printf ("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+        id_print (p, "Received %" PRIu64 " packets this thread.\n", 
+                    p->counter);
         fflush (stdout);
-
-        p->pps = p->counter/p->duration;
 
         CleanUp (p);
     }
@@ -209,7 +207,7 @@ record_throughput (ProgramArgs *args, FILE *out)
     memset (buf, 0, 32);
     snprintf (buf, 32, "%lld,%.9ld,%"PRIu64"\n", (long long) now.tv_sec, 
             now.tv_nsec, total_npackets);
-    n = fwrite (buf, strlen (buf), 1, out);
+    n = fwrite (buf, 1, strlen (buf), out);
     if (n < strlen (buf)) {
         printf ("Error writing throughput to file!\n");
     }
@@ -236,6 +234,7 @@ UpdateProgramState (ProgramState state)
         CollectStats (&args);
     }
 
+    args.program_state = state;
     for (i = 0; i < args.nthreads; i++) {
         args.thread_data[i].program_state = state;
         if ((state == experiment) && (!args.tr)) {
@@ -265,6 +264,8 @@ void
 setup_filenames (ThreadArgs *targs)
 {
     // Caller is responsible for creating the directory
+    // Currently only have either latency or tput fname, but leaving it like this
+    // in case we decide to collect both on a machine later
     char s[FNAME_BUF];
     char s2[FNAME_BUF];
 
@@ -273,16 +274,15 @@ setup_filenames (ThreadArgs *targs)
     memset (&targs->latency_outfile, 0, FNAME_BUF);
     memset (&targs->tput_outfile, 0, FNAME_BUF);
 
-    snprintf (s, FNAME_BUF, "%s/%s_%s.%d-latency.dat", args.outdir, args.outfile, args.machineid, 
-            targs->threadid);
-    snprintf (s2, FNAME_BUF, "%s/%s_%s-throughput.dat", args.outdir, args.outfile, args.machineid);
+    if (targs->tr) {
+        snprintf (s, FNAME_BUF, "%s/%s_%s.%d-latency.dat", args.outdir, args.outfile, args.machineid, 
+                targs->threadid);
+    } else {
+        snprintf (s2, FNAME_BUF, "%s/%s_%s-throughput.dat", args.outdir, args.outfile, args.machineid);
+    }
 
     memcpy (targs->latency_outfile, s, FNAME_BUF);
     memcpy (targs->tput_outfile, s2, FNAME_BUF);
-
-    id_print (targs, "Results going into file");
-    printf (" %s\n", targs->latency ? targs->latency_outfile : targs->tput_outfile);
-    fflush (stdout);
 }
 
 

@@ -18,7 +18,6 @@ class Experiment(object):
 
         self.basecmd = args.basecmd
         self.whoami = args.whoami
-        self.do_tput = args.do_tput
         self.server_addr = args.server_addr
         self.nclient_threads = args.nclient_threads
         self.nclient_machines = args.nclient_machines
@@ -46,9 +45,6 @@ class Experiment(object):
 
         if not os.path.isdir(self.outdir):
             os.mkdir(self.outdir)
-
-        if self.do_tput:
-            self.basecmd += " -t"
 
         self.printer("Number of client threads: %d" % 
                 (self.nclient_threads * len(self.clients)))
@@ -152,15 +148,12 @@ class Experiment(object):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run one or more server processes '
             'and multiple client processes.')
+    parser.add_argument('whoami',
+            help=('Emulab username for SSH'))
     parser.add_argument('basecmd',
             help=('Command to run for each process. Will be augmented '
             'with port number and total number of clients for server, '
             'server IP and port number for clients.'))
-    parser.add_argument('whoami',
-            help=('Emulab username for SSH'))
-    parser.add_argument('--do_tput',
-            help=('Run throughput experiment(s)'),
-            action='store_true')
     parser.add_argument('--server_addr',
             help=('Address of the server. Default server-0'),
             default="server-0") 

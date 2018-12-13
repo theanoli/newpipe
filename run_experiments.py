@@ -11,6 +11,8 @@ import shlex
 import subprocess
 import time
 
+default_expduration = 60
+default_nclient_threads = 256
 
 class Experiment(object):
     def __init__(self, args):
@@ -155,13 +157,13 @@ if __name__ == "__main__":
             'with port number and total number of clients for server, '
             'server IP and port number for clients.'))
     parser.add_argument('--server_addr',
-            help=('Address of the server. Default server-0'),
+            help=('Name of the server. Default server-0'),
             default="server-0") 
     parser.add_argument('--nclient_threads',
             type=int,
             help=('Number of client threads to run per client machine. '
-                'Default 256.'),
-            default=256)
+                'Default %d.', default_nclient_threads),
+            default=default_nclient_threads)
     parser.add_argument('--nclient_machines',
             type=int,
             help=("Number of client machines to launch. Default 1."),
@@ -185,8 +187,9 @@ if __name__ == "__main__":
             action='store_true')
     parser.add_argument('--expduration',
             type=int,
-            help=('Set throughput experiment duration. Default 20s.'),
-            default=20)
+            help=('Set throughput experiment duration. Default %ds.', 
+                default_expduration),
+            default=default_expduration)
     parser.add_argument('--no_pin_procs',
             help=('Pin each process to a core.'),
             action='store_true')

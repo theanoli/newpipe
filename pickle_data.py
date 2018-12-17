@@ -9,7 +9,8 @@ import pickle
 import subprocess
 import multiprocessing
 
-cutoff = 0  # in seconds
+start_cutoff_duration = 10  # in seconds
+end_cutoff_duration = 1
 us_per_sec = 1e6
 
 def load_latency_file(fpath):
@@ -65,20 +66,18 @@ def load_client_data(experiment):
     try:
         tput = process_tput_dataframe(df)
         starttime = tput['timestamp'].iloc[0]
-        start_cutoff = starttime + cutoff * us_per_sec
+        start_cutoff = starttime + start_cutoff_duration * us_per_sec
         endtime = tput['timestamp'].iloc[-1]
-        end_cutoff = endtime - cutoff * us_per_sec
-        # print(starttime, start_cutoff)
-        # print(endtime, end_cutoff)
-        # print(tput)
+        end_cutoff = endtime - end_cutoff_duration * us_per_sec
         tput = tput[tput['timestamp'].between(start_cutoff, end_cutoff)]
-        print(tput)
+
+        # Set start time as earliest marked time, convert to usec
         new_starttime = tput['timestamp'].iloc[0]
         tput['timestamp'] = tput['timestamp'].apply(lambda x: (x - new_starttime)/us_per_sec)
     except:
         # Need to investigate what is wrong with this file; do not continue
         print("%s: derped on file %s" % (experiment, tput_file))
-        return
+        raise
 
     latencies = []
     for fname in latency_files:
@@ -86,18 +85,20 @@ def load_client_data(experiment):
         try:
             latency = process_latency_timestamps(df)
             starttime = latency['sendtime'].iloc[0]
-            start_cutoff = starttime + cutoff * us_per_sec
+            start_cutoff = starttime + start_cutoff_duration * us_per_sec
             endtime = latency['sendtime'].iloc[-1]
-            end_cutoff = endtime - cutoff * us_per_sec
-            latency = latency[(latency['sendtime'] > start_cutoff) & (latency['sendtime'] < end_cutoff)]
+            end_cutoff = endtime - end_cutoff_duration * us_per_sec
+            latency = latency[latency['sendtime'].between(start_cutoff, end_cutoff)]
             new_starttime = latency['sendtime'].iloc[0]
+            
+            # Set start time as earliest marked time, convert to usec
             latency['sendtime'] = latency['sendtime'].apply(lambda x: (x - new_starttime)/us_per_sec)
             latency['recvtime'] = latency['recvtime'].apply(lambda x: (x - new_starttime)/us_per_sec)
             latencies.append(latency[['latency', 'sendtime']])
         except:
             # Need to investigate what is wrong with this file; do not continue
             print("%s: derped on file %s" % (experiment, fname))
-            return
+            raise
     
     #return pd.concat(latencies, ignore_index=True), tputs
     return latencies, tput
@@ -134,6 +135,8 @@ def worker(experiment, return_dict):
         return_dict[experiment]['nserver_threads']))
 
 if __name__ == '__main__':
+    print("--------------------------------------------------------------------------------")
+    print("Pickler is getting ready to pickle...")
     home = os.getcwd()
     try: 
         results_dir = sys.argv[1]
@@ -148,8 +151,8 @@ if __name__ == '__main__':
 
     experiments = list(filter(lambda x: 'results' in x, os.listdir(os.path.join(home, results_dir))))
 
-    print("Old experiment_dict keys:")
-    print(experiment_dict.keys())
+    print("\nOld experiment_dict keys:")
+    [print(key) for key in experiment_dict.keys()]
 
     manager = multiprocessing.Manager()
     return_dict = manager.dict()
@@ -166,9 +169,11 @@ if __name__ == '__main__':
         p.join()
     
     experiment_dict.update(return_dict)
-    print("New experiment_dict keys:")
-    print(experiment_dict.keys())
+    print("\nNew experiment_dict keys:")
+    [print(key) for key in experiment_dict.keys()]
 
-    print("Pickling!")
+    print("\nPickling!")
     with open(os.path.join(home, results_dir, 'experiment_dict.pickle'), 'w+b') as f:
         pickle.dump(experiment_dict, f)
+
+    print("--------------------------------------------------------------------------------\n")

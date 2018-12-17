@@ -94,7 +94,7 @@ main (int argc, char **argv)
         // During STARTUP, client threads will be connecting to the server.
         sleep (STARTUP);
         UpdateProgramState (experiment); // start sending
-        sleep (WARMUP + args.expduration + COOLDOWN + 3);
+        sleep (WARMUP + args.expduration + COOLDOWN);
         UpdateProgramState (end);
 
     } else {

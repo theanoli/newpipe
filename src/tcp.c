@@ -143,6 +143,7 @@ Echo (ThreadArgs *p)
 {
     // Server-side only!
     int j, n, i, done;
+    int nconnections = p->ncli; 
     struct epoll_event events[MAXEVENTS];
     int to_write;
     int written;
@@ -194,13 +195,11 @@ Echo (ThreadArgs *p)
                 while ((j = read (events[i].data.fd, q, PSIZE)) > 0) {
                     q += j;
                 }
-                if ((q - rcv_buf) == 0) {
-                    continue;
-                }
 
-                if ((errno != EAGAIN) || (errno != EWOULDBLOCK)) {
+                if ((j == 0) || ((errno != EAGAIN) && (errno != EWOULDBLOCK))) {
                     perror ("server read");
                     done = 1;  // Close this socket
+                    nconnections--; 
                 } else {
                     // We've read all the data; echo it back to the client
                     to_write = q - rcv_buf;
@@ -212,6 +211,7 @@ Echo (ThreadArgs *p)
                             if (errno != EAGAIN) {
                                 perror ("server write");
                                 done = 1;
+                                nconnections--;
                                 break;
                             }
                         }
@@ -225,8 +225,11 @@ Echo (ThreadArgs *p)
                 }
 
                 if (done) {
-                    printf ("Got an error!\n");
                     close (events[i].data.fd);
+                    if (nconnections <= 0) {
+                        printf ("No more connections left! Exiting...\n");
+                        exit (-122);
+                    }
                 }
             }
         }

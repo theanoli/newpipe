@@ -15,47 +15,123 @@ from plotly.graph_objs import *
 #init_notebook_mode()
 
 home = os.getcwd()
-with open(os.path.join(home, 'experiment_dict.pickle'), 'rb') as f:
+results = os.path.join(home, 'results')
+with open(os.path.join(results, 'experiment_dict.pickle'), 'rb') as f:
     experiment_dict = pickle.load(f)
 
-data = []
-for exp, exp_data in experiment_dict.items():
-    x = exp_data['throughput']['timestamp']
-    y = exp_data['throughput']['tput']
-    text = []
+data_dict = {}
 
-    data.append(Scatter(x=x,
-                        y=y,
-                        name="%d clients" % exp_data['nclients'],
-                        mode='lines+markers',))
+def throughput():
+    print("Generating throughput over time...")
+    data = []
+    for exp, exp_data in experiment_dict.items():
+        x = exp_data['throughput']['timestamp']
+        y = exp_data['throughput']['tput']
+        text = []
+
+        data.append(Scatter(x=x,
+                            y=y,
+                            name="%d clients" % exp_data['nclients'],
+                            mode='lines+markers',))
+
+        layout = Layout(
+                title='Throughput over time for single client machine, multiple client thread echo server',
+                showlegend=True,
+                xaxis=dict(title='time (s)'),
+                yaxis=dict(title='throughput (pps)')
+        )
+
+        fig = Figure(data=data, layout=layout)
+        plotly.offline.plot(fig, 
+                filename=os.path.join(results, 'throughput.html'))
+
+
+def latency_hist():
+    print("Generating latency histogram...")
+    data = []
+    for exp, exp_data in experiment_dict.items():
+        latencies = pd.concat([x for x in exp_data['latency']], ignore_index=True)
+        x = latencies['latency']
+
+        data.append(Histogram(x=x,
+                            name="%d clients" % exp_data['nclients'],
+                            opacity=0.6))
+
+        layout = Layout(
+                title='Latency over time for single client machine, multiple client thread echo server',
+                showlegend=True,
+                xaxis=dict(title='sendtime'),
+                yaxis=dict(title='latency (usec)')
+        )
+
+        fig = Figure(data=data, layout=layout)
+        plotly.offline.plot(fig, 
+                filename=os.path.join(results, 'latency_hist.html'))
+
+
+def latency_box():
+    print("Generating latency boxplot...")
+    data = []
+    data_dict = {}
+
+    for exp, exp_data in experiment_dict.items():
+        latencies = pd.concat([x for x in exp_data['latency']], ignore_index=True)
+        data_dict[exp_data['nclients']] = latencies['latency']
+
+    for nclients in sorted(data_dict.keys()):
+        y = data_dict[nclients]
+        data.append(Box(y=y,
+                            name="%d clients" % nclients,
+                            ))
+
+        layout = Layout(
+                title='Latency boxplot, multiple client thread echo server',
+                showlegend=False,
+                xaxis=dict(title='nclients'),
+                yaxis=dict(title='latency (usec)')
+        )
+
+        fig = Figure(data=data, layout=layout)
+        plotly.offline.plot(fig, 
+                filename=os.path.join(results, 'latency_box.html'))
+
+
+# Throughput-latency
+def throughput_latency():
+    print("Generating throughput-latency...")
+    for exp, exp_data in experiment_dict.items():
+        nclients = exp_data['nclients']
+        data_dict[nclients] = {}
+        latencies = pd.concat([x for x in exp_data['latency']], ignore_index=True)
+        data_dict[nclients]['latency'] = latencies['latency'].median()
+        data_dict[nclients]['tput'] = exp_data['throughput']['tput'].mean()
+
+    keys = sorted(data_dict.keys())
+    x = [data_dict[key]['tput'] for key in keys]  # throughout
+    y = [data_dict[key]['latency'] for key in keys] # latency
+
+    data = Scatter(x=x,
+            y=y,
+            mode='lines+markers+text',
+            textposition='top left',
+            text=["%d clients" % key for key in keys],
+            )
 
     layout = Layout(
-            title='Throughput over time for single client machine, multiple client thread echo server',
-            showlegend=True,
-            xaxis=dict(title='time (s)'),
-            yaxis=dict(title='throughput (pps)')
-    )
+            title="Mean throughput/median latency for single client machine, multiple client thread echo server",
+            xaxis=dict(title='throughput (pps)'),
+            yaxis=dict(title='latency (usec)'),
+            )
 
-    fig = Figure(data=data, layout=layout)
-    plotly.offline.plot(fig, filename='throughput.html')
+    fig = Figure(data=[data], layout=layout)
+    plotly.offline.plot(fig, 
+            filename=os.path.join(results, 'tputlatency.html'))
 
-data = []
-for exp, exp_data in experiment_dict.items():
-    x = exp_data['latency'][0]['sendtime']
-    y = exp_data['latency'][0]['latency']
 
-    data.append(Scatter(y=y,
-                        x=x,
-                        name="%d clients" % exp_data['nclients'],
-                        mode='lines',))
-
-    layout = Layout(
-            title='Latency over time for single client machine, multiple client thread echo server',
-            showlegend=True,
-            xaxis=dict(title='sendtime'),
-            yaxis=dict(title='latency (usec)')
-    )
-
-    fig = Figure(data=data, layout=layout)
-    plotly.offline.plot(fig, filename='latency.html')
-
+print("--------------------------------------------------------------------------------")
+print("Generating plots!")
+throughput_latency()
+throughput()
+latency_hist()
+latency_box()
+print("--------------------------------------------------------------------------------\n")

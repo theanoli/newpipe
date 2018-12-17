@@ -23,6 +23,10 @@ data_dict = {}
 
 def throughput():
     print("Generating throughput over time...")
+    data_dict = {}
+    # Combine experiments with same nclients, nservers
+
+
     data = []
     for exp, exp_data in experiment_dict.items():
         x = exp_data['throughput']['timestamp']
@@ -49,6 +53,8 @@ def throughput():
 def latency_hist():
     print("Generating latency histogram...")
     data = []
+    data_dict = {}
+
     for exp, exp_data in experiment_dict.items():
         latencies = pd.concat([x for x in exp_data['latency']], ignore_index=True)
         x = latencies['latency']
@@ -101,20 +107,37 @@ def throughput_latency():
     print("Generating throughput-latency...")
     for exp, exp_data in experiment_dict.items():
         nclients = exp_data['nclients']
-        data_dict[nclients] = {}
-        latencies = pd.concat([x for x in exp_data['latency']], ignore_index=True)
-        data_dict[nclients]['latency'] = latencies['latency'].median()
-        data_dict[nclients]['tput'] = exp_data['throughput']['tput'].mean()
+        nservers = exp_data['nserver_threads']
+        dkey = (nservers, nclients)
 
-    keys = sorted(data_dict.keys())
-    x = [data_dict[key]['tput'] for key in keys]  # throughout
-    y = [data_dict[key]['latency'] for key in keys] # latency
+        latencies = pd.concat([x for x in exp_data['latency']], ignore_index=True)
+        tputs = exp_data['throughput']['tput']
+
+        if dkey not in data_dict:
+            data_dict[dkey] = {}
+            data_dict[dkey]['tputs'] = exp_data['throughput']['tput']
+            data_dict[dkey]['latencies'] = latencies
+        else:
+            data_dict[dkey]['tputs'] = pd.concat(data_dict[dkey]['tputs'], 
+                tputs, ignore_index=True)
+            data_dict[dkey]['latencies'] = pd.concat(data_dict[dkey]['latencies'], 
+                latencies, ignore_index=True)
+
+    for dkey in data_dict: 
+        data_dict[dkey]['latency_stat'] = data_dict[dkey]['latencies']['latency'].median()
+        data_dict[dkey]['tput_stat'] = data_dict[dkey]['tputs'].mean()
+
+    print(data_dict)
+
+    keys = sorted(data_dict.keys(), key=lambda elem: (elem[0], elem[1]))
+    x = [data_dict[key]['tput_stat'] for key in keys]  # throughout
+    y = [data_dict[key]['latency_stat'] for key in keys] # latency
 
     data = Scatter(x=x,
             y=y,
             mode='lines+markers+text',
             textposition='top left',
-            text=["%d clients" % key for key in keys],
+            text=["%ds, %dcli" % (nserv, ncli) for nserv, ncli in keys],
             )
 
     layout = Layout(

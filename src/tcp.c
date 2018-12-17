@@ -99,7 +99,6 @@ TimestampTxRx (ThreadArgs *p)
     
     // Client will be immediately put into experiment mode after 
     // startup phase
-    id_print (p, "Getting ready to send packets\n");
     while (p->program_state == experiment) {
         sendtime = PreciseWhen ();
         snprintf (pbuf, PSIZE, "%lld,%.9ld,",

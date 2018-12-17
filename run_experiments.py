@@ -136,6 +136,7 @@ class Experiment(object):
                     " -H %s" % self.server_addr +
                     " -d %s" % self.outdir + 
                     " -o %s" % self.outfile +
+                    " -u %d" % self.expduration + 
                     " -T %d" % (self.nclient_threads) +
                     " -P %d" % self.start_port)
 

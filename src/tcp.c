@@ -39,7 +39,7 @@ LaunchThreads (ProgramArgs *pargs)
         targs[i].port = pargs->port;
         targs[i].host = pargs->host;
         targs[i].tr = pargs->tr;
-        targs[i].latency = pargs->latency;
+        targs[i].program_state = startup;
 
         // For servers, this is how many clients from which to expect connections.
         // For clients, this is how many total server threads there are. 
@@ -99,6 +99,7 @@ TimestampTxRx (ThreadArgs *p)
     
     // Client will be immediately put into experiment mode after 
     // startup phase
+    id_print (p, "Getting ready to send packets\n");
     while (p->program_state == experiment) {
         sendtime = PreciseWhen ();
         snprintf (pbuf, PSIZE, "%lld,%.9ld,",
@@ -121,8 +122,9 @@ TimestampTxRx (ThreadArgs *p)
         }
 
         recvtime = PreciseWhen ();        
+        count++;
 
-        if ((!p->no_record) && (count % 100 == 0)) {
+        if ((!p->no_record) && (count % 1000 == 0)) {
             memset (wbuf, 0, PSIZE * 2);
             m = snprintf (wbuf, PSIZE, "%s", pbuf);
             snprintf (wbuf + m, PSIZE, "%lld,%.9ld\n", 
@@ -142,6 +144,10 @@ Echo (ThreadArgs *p)
     // Server-side only!
     int j, n, i, done;
     struct epoll_event events[MAXEVENTS];
+    int to_write;
+    int written;
+    char rcv_buf[PSIZE];
+    char *q;
 
     p->counter = 0;
 
@@ -167,47 +173,39 @@ Echo (ThreadArgs *p)
         debug_print (p, DEBUG, "Got %d events\n", n);
 
         for (i = 0; i < n; i++) {
-            // Check for errors
+            // Check for errors 
             if ((events[i].events & EPOLLERR) ||
-                    (events[i].events & EPOLLHUP) ||
-                    !(events[i].events & EPOLLIN)) {
+                    (events[i].events & EPOLLHUP)) {
                 printf ("epoll error!\n");
                 close (events[i].data.fd);
-                if (p->latency) {
-                    exit (1);
-                } else {
-                    continue;
-                }
             } else if (events[i].data.fd == p->servicefd) {
                 // Someone is trying to connect; ignore. All clients should have
                 // connected already.
                 continue;
-            } else {
+            } else if (events[i].events & EPOLLIN) {
                 // There's data to be read
                 done = 0;
-                int to_write;
-                int written;
-                char rcv_buf[PSIZE];
-                char *q;
+                q = rcv_buf;
+                memset (rcv_buf, 0, PSIZE);
 
                 // This is dangerous because rcv_buf is only PSIZE bytes long
                 // TODO figure this out
-                q = rcv_buf;
 
                 while ((j = read (events[i].data.fd, q, PSIZE)) > 0) {
                     q += j;
                 }
-                
-                if (errno != EAGAIN) {
-                    if (j < 0) {
-                        perror ("server read");
-                    }
+                if ((q - rcv_buf) == 0) {
+                    continue;
+                }
+
+                if ((errno != EAGAIN) || (errno != EWOULDBLOCK)) {
+                    perror ("server read");
                     done = 1;  // Close this socket
                 } else {
                     // We've read all the data; echo it back to the client
                     to_write = q - rcv_buf;
                     written = 0;
-                    
+
                     while ((j = write (events[i].data.fd, 
                                     rcv_buf + written, to_write) + written) < to_write) {
                         if (j < 0) {
@@ -233,8 +231,6 @@ Echo (ThreadArgs *p)
             }
         }
     }
-
-    p->tput_done = 1;
 }
 
 
@@ -360,7 +356,6 @@ establish (ThreadArgs *p)
     int nevents, i;
     struct epoll_event events[MAXEVENTS];
     struct epoll_event event;
-    double t0, duration;
     int connections = 0;
 
     clen = (socklen_t) sizeof (p->prot.sin2);
@@ -378,11 +373,8 @@ establish (ThreadArgs *p)
 
     id_print (p, "Starting loop to wait for connections...\n");
 
-    t0 = When ();
     while (p->program_state == startup) {
-        duration = STARTUP - (When() - t0);
-
-        nevents = epoll_wait (p->ep, events, MAXEVENTS, duration); 
+        nevents = epoll_wait (p->ep, events, MAXEVENTS, -1); 
         if (nevents < 0) {
             if (errno != EINTR) {
                 perror ("establish: epoll_wait");

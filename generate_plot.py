@@ -37,5 +37,25 @@ for exp, exp_data in experiment_dict.items():
     )
 
     fig = Figure(data=data, layout=layout)
-    plotly.offline.plot(fig)
+    plotly.offline.plot(fig, filename='throughput.html')
+
+data = []
+for exp, exp_data in experiment_dict.items():
+    x = exp_data['latency'][0]['sendtime']
+    y = exp_data['latency'][0]['latency']
+
+    data.append(Scatter(y=y,
+                        x=x,
+                        name="%d clients" % exp_data['nclients'],
+                        mode='lines',))
+
+    layout = Layout(
+            title='Latency over time for single client machine, multiple client thread echo server',
+            showlegend=True,
+            xaxis=dict(title='sendtime'),
+            yaxis=dict(title='latency (usec)')
+    )
+
+    fig = Figure(data=data, layout=layout)
+    plotly.offline.plot(fig, filename='latency.html')
 

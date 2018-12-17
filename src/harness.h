@@ -27,10 +27,10 @@
 // For throughput experiments: time to wait before
 // starting measurements
 #define DEBUG 0
-#define STARTUP 5
-#define WARMUP 3
-#define COOLDOWN 5
-#define READTO 2  // Pretty big but don't want to exit unnecessarily
+#define STARTUP 2
+#define WARMUP 2
+#define COOLDOWN 3
+#define READTO 0  
 
 // TCP-specific
 #if defined(TCP)
@@ -82,26 +82,17 @@ struct threadargs
     char    *host;          /* Name of receiving host                       */
     char    tput_outfile[FNAME_BUF];
     char    latency_outfile[FNAME_BUF];       /* Where results go to die                      */
-    uint8_t     latency;        /* 1 if this is a latency experiment            */
     uint16_t     ncli;           /* #server threads if tr; #client threads per 
                                server thread if rcv                         */
-    uint32_t     nrtts; 
     uint8_t     no_record;
-
-    int     bufflen;       /* Length of transmitted buffer                  */
 
     // for throughput measurements
     uint64_t counter;       /* For counting packets!                        */
-    double  duration;       /* Measured time over which packets are blasted */
     volatile int ep;                 /* For epoll file descriptor                    */
     uint64_t retransmits;   /* Only useful for unreliable transports        */
 
     // timer data 
     volatile ProgramState program_state;
-    double t0;
-    double pps;
-    uint8_t tput_done;
-
 };
 
 typedef struct programargs ProgramArgs;
@@ -109,7 +100,6 @@ struct programargs
 {
     volatile ProgramState    program_state;
     char *  machineid;      /* Machine id */
-    int     latency;        /* Measure latency (1) or throughput (0)        */
     int     expduration;    /* How long to count packets                    */
     char    *host;          /* Name of receiving host                       */
     short   port;
@@ -143,7 +133,9 @@ void InterruptThreads ();
 void UpdateProgramState (ProgramState state);
 void UpdateEpFds ();
 double When ();
+void SignalHandler (int signum);
 struct timespec PreciseWhen ();
+void PrintPreciseTime ();
 void Init (ProgramArgs *p, int* argc, char*** argv);
 void Setup (ThreadArgs *p);
 void establish (ThreadArgs *p);
@@ -156,7 +148,6 @@ void TimestampTxRx (ThreadArgs *p);
 void Echo (ThreadArgs *p);
 void CleanUp (ThreadArgs *p);
 void PrintUsage();
-void SignalHandler (int signum);
 void CollectStats (ProgramArgs *p);
 int getopt( int argc, char * const argv[], const char *optstring);
 void setup_filenames (ThreadArgs *targs);

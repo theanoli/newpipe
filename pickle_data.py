@@ -34,8 +34,8 @@ def nsec_to_usec(nsec_string):
     return int(nsec_string) * 1e-3
 
 def process_latency_timestamps(df):
-    recvtime = df['send_sec'].apply(lambda x: sec_to_usec(x)) + df['send_ns'].apply(lambda x: nsec_to_usec(x))
-    sendtime = df['recv_sec'].apply(lambda x: sec_to_usec(x)) + df['recv_ns'].apply(lambda x: nsec_to_usec(x))
+    sendtime = df['send_sec'].apply(lambda x: sec_to_usec(x)) + df['send_ns'].apply(lambda x: nsec_to_usec(x))
+    recvtime = df['recv_sec'].apply(lambda x: sec_to_usec(x)) + df['recv_ns'].apply(lambda x: nsec_to_usec(x))
     cols = ["sendtime", "recvtime", "latency"]
     newdf = pd.concat([sendtime, recvtime, recvtime - sendtime],
                     axis=1)
@@ -93,7 +93,7 @@ def load_client_data(experiment):
             new_starttime = latency['sendtime'].iloc[0]
             latency['sendtime'] = latency['sendtime'].apply(lambda x: (x - new_starttime)/us_per_sec)
             latency['recvtime'] = latency['recvtime'].apply(lambda x: (x - new_starttime)/us_per_sec)
-            latencies.append(latency['latency'])
+            latencies.append(latency[['latency', 'sendtime']])
         except:
             # Need to investigate what is wrong with this file; do not continue
             print("%s: derped on file %s" % (experiment, fname))

@@ -20,14 +20,12 @@ main (int argc, char **argv)
     pthread_t recorder_tid;
 
     /* Initialize vars that may change from default due to arguments */
-    args.latency = 1;  // Default to do latency; this is arbitrary
     args.no_record = 0;
 
     // Default initialization to server (not transmitter)
     args.tr = 0;
 
     signal (SIGINT, SignalHandler);
-    signal (SIGALRM, SignalHandler);
     signal (SIGTERM, SignalHandler);
 
     // Machine ID
@@ -71,9 +69,6 @@ main (int argc, char **argv)
             case 'P': args.port = atoi (optarg);
                       break;
 
-            case 't': args.latency = 0;
-                      break;
-
             case 'u': args.expduration = atoi (optarg);
                       break;
 
@@ -108,23 +103,28 @@ main (int argc, char **argv)
         pthread_create (&recorder_tid, NULL, ThroughputRecorder, (void *)&args);
 
         // Wait a few seconds to let clients come online
-        printf ("Waiting for clients to start up and connect...\n");
+        PrintPreciseTime ();
+        printf ("Waiting for clients to start up and connect...\n"); 
         sleep (STARTUP);
 
-        printf ("Entering warmup period...\n");
+        PrintPreciseTime ();
+        printf ("Entering warmup period...\n"); 
         // Send the commfd around to other server threads
         UpdateEpFds ();
         UpdateProgramState (warmup);
         sleep (WARMUP);
         
+        PrintPreciseTime ();
         printf ("Starting counting packets...\n");
         UpdateProgramState (experiment);
         sleep (args.expduration);
 
+        PrintPreciseTime ();
         printf ("Experiment over, stopping counting packets...\n");
         UpdateProgramState (cooldown);
         sleep (COOLDOWN);
 
+        PrintPreciseTime ();
         printf ("All done!\n");
         UpdateProgramState (end);
         pthread_join (recorder_tid, NULL);
@@ -215,35 +215,16 @@ record_throughput (ProgramArgs *args, FILE *out)
 
 
 void
-InterruptThreads (void)
-{
-    int i;
-    for (i = 0; i < args.nthreads; i++) {
-        if (!args.thread_data[i].tput_done) {
-            pthread_kill (args.tids[i], SIGTERM);
-        }
-    }
-}
-
-
-void
 UpdateProgramState (ProgramState state)
 {
     int i;
-    if ((args.collect_stats) && (!args.tr) && (state == experiment)) {
+    if ((args.collect_stats) && (!args.tr) && (state == warmup)) {
         CollectStats (&args);
     }
 
     args.program_state = state;
     for (i = 0; i < args.nthreads; i++) {
         args.thread_data[i].program_state = state;
-        if ((state == experiment) && (!args.tr)) {
-            args.thread_data[i].t0 = When ();
-        }
-
-        if ((state == cooldown) && (!args.tr)) {
-            args.thread_data[i].duration = When () - args.thread_data[i].t0;
-        }
     }
 }
 
@@ -347,38 +328,6 @@ SignalHandler (int signum) {
     if (signum == SIGINT) {
         printf ("Got a SIGINT...\n");
         exit (0);
-    } else if (signum == SIGALRM) {
-        // We only need to set a new alarm if this is a throughput experiment
-        // Otherwise just let the clock run; latency duration is measured by 
-        // number of packets (-r option).
-        int i; 
-        if (!args.latency) {
-            if (args.program_state == warmup) {
-                printf ("Starting to count packets for throughput...\n");
-                args.program_state = experiment; 
-                if (args.collect_stats) {
-                    CollectStats(&args);
-                }
-
-                for (i = 0; i < args.nthreads; i++) {
-                    args.thread_data[i].t0 = When();
-                }
-
-                alarm (args.expduration);
-            } else if (args.program_state == experiment) {
-                // Experiment has completed; let it keep running without counting
-                // packets to allow other servers to finish up
-                args.program_state = cooldown;
-                for (i = 0; i < args.nthreads; i++) {
-                    args.thread_data[i].duration = When () - args.thread_data[i].t0;
-                }
-                printf ("Experiment over, stopping counting packets...\n");
-                alarm (COOLDOWN);
-            } else if (args.program_state == cooldown) {
-                // The last signal; end the experiment by setting p->tput_done
-                args.program_state = end;
-            }
-        }
     } else if (signum == SIGTERM) {
         printf ("Oooops got interrupted...\n");
         exit (0);
@@ -405,6 +354,14 @@ PreciseWhen (void)
 
     clock_gettime (CLOCK_MONOTONIC, &spec);
     return spec;
+}
+
+void
+PrintPreciseTime (void)
+{
+    struct timespec spec;
+    spec = PreciseWhen ();
+    printf ("%lld,%.9ld: ", (long long) spec.tv_sec, spec.tv_nsec);
 }
 
 

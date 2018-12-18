@@ -9,7 +9,7 @@ import pickle
 import subprocess
 import multiprocessing
 
-start_cutoff_duration = 10  # in seconds
+start_cutoff_duration = 5  # in seconds
 end_cutoff_duration = 1
 us_per_sec = 1e6
 
@@ -130,8 +130,9 @@ def worker(experiment, return_dict):
                           'nserver_threads': int(config['nserver_threads']),
                           }
     print("Completed loading experiment %s" % experiment)
-    print("\tnclient_threads %d nserver_threads %d" % (
+    print("\tnclient_threads, total %d client threads, %d nserver_threads %d" % (
         return_dict[experiment]['nclient_threads'],
+        return_dict[experiment]['nclients'],
         return_dict[experiment]['nserver_threads']))
 
 if __name__ == '__main__':

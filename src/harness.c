@@ -99,8 +99,6 @@ main (int argc, char **argv)
 
     } else {
         // Servers
-        // Start a recorder thread for throughput
-        pthread_create (&recorder_tid, NULL, ThroughputRecorder, (void *)&args);
 
         // Wait a few seconds to let clients come online
         PrintPreciseTime ();
@@ -109,18 +107,22 @@ main (int argc, char **argv)
 
         PrintPreciseTime ();
         printf ("Entering warmup period...\n"); 
+
+        // Start a recorder thread for throughput
+        pthread_create (&recorder_tid, NULL, ThroughputRecorder, (void *)&args);
+
         // Send the commfd around to other server threads
         UpdateEpFds ();
         UpdateProgramState (warmup);
         sleep (WARMUP);
         
         PrintPreciseTime ();
-        printf ("Starting counting packets...\n");
+        printf ("Starting experiment period...\n");
         UpdateProgramState (experiment);
         sleep (args.expduration);
 
         PrintPreciseTime ();
-        printf ("Experiment over, stopping counting packets...\n");
+        printf ("Experiment over, cooling down...\n");
         UpdateProgramState (cooldown);
         sleep (COOLDOWN);
 

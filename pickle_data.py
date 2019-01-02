@@ -19,7 +19,7 @@ def load_latency_file(fpath):
                      index_col=False,
                      names=["send_sec", "send_ns", "recv_sec", "recv_ns"],
                     sep=',')
-    return df
+    return df[:-1]
 
 def load_tput_file(fpath):
     df = pd.read_csv(fpath,

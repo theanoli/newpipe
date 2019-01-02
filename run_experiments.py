@@ -111,7 +111,7 @@ class Experiment(object):
 
         serv_cmd = (self.basecmd +
                 # -c should be the per-server thread #clients
-                " -c %d" % (self.total_clients/self.nserver_threads) +  
+                " -c %d" % self.total_clients +  
                 " -P %d" % self.start_port +
                 " -d %s" % self.outdir + 
                 " -o %s" % self.outfile +

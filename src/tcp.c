@@ -158,7 +158,7 @@ Echo (ThreadArgs *p)
         // sppppiiiinnnnnn
     }
 
-    id_print (p, "Entering packet receive mode...\n");
+    // id_print (p, "Entering packet receive mode...\n");
 
     while (p->program_state != end) {
         n = epoll_wait (p->ep, events, MAXEVENTS, 1);

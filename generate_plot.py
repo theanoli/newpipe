@@ -14,7 +14,7 @@ from plotly.offline import download_plotlyjs, init_notebook_mode, iplot
 from plotly.graph_objs import *
 #init_notebook_mode()
 
-title = "with increasing server thread count,<br>16 client machines, 32 threads each, 1 trial"
+title = "with increasing client thread count,<br>64 server threads, 5 trials"
 
 home = os.getcwd()
 results = os.path.join(home, 'results')

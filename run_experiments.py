@@ -208,5 +208,7 @@ if __name__ == "__main__":
     time.sleep(1)
     clients = experiment.launch_clients()
     server.wait()
+    for client in clients:
+        client.wait()
     experiment.printer("Completed experiment!")
 

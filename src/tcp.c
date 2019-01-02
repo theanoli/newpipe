@@ -80,9 +80,10 @@ TimestampTxRx (ThreadArgs *p)
     char pbuf[PSIZE];  // for packets
     char wbuf[PSIZE * 2];  // for send,rcv time, to write to file
     int n, m;
-    uint64_t count = 0;  // packet counter for sampling
     struct timespec sendtime, recvtime;
     FILE *out;
+
+    p->counter = 0;
 
     // Open file for recording latency data
     if (p->tr && (!p->no_record)) {
@@ -121,9 +122,9 @@ TimestampTxRx (ThreadArgs *p)
         }
 
         recvtime = PreciseWhen ();        
-        count++;
+        p->counter++;
 
-        if ((!p->no_record) && (count % 1000 == 0)) {
+        if ((!p->no_record) && (p->counter % 1000 == 0)) {
             memset (wbuf, 0, PSIZE * 2);
             m = snprintf (wbuf, PSIZE, "%s", pbuf);
             snprintf (wbuf + m, PSIZE, "%lld,%.9ld\n", 
@@ -305,8 +306,8 @@ Setup (ThreadArgs *p)
         }
 
         struct timeval tv;
-        tv.tv_sec = READTO;
-        tv.tv_usec = 0;
+        tv.tv_sec = 0;
+        tv.tv_usec = READTOUSEC;
         if (setsockopt (sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv) < 0) {
             printf ("tester: client: SO_RCVTIMEO failed! errno=%d\n", errno);
             exit (-7);

@@ -93,6 +93,7 @@ main (int argc, char **argv)
         // for the server threads to start before trying to connect
         // During STARTUP, client threads will be connecting to the server.
         sleep (STARTUP);
+        pthread_create (&recorder_tid, NULL, ThroughputRecorder, (void *)&args);
         UpdateProgramState (experiment); // start sending
         sleep (WARMUP + args.expduration + COOLDOWN);
         UpdateProgramState (end);
@@ -247,8 +248,6 @@ void
 setup_filenames (ThreadArgs *targs)
 {
     // Caller is responsible for creating the directory
-    // Currently only have either latency or tput fname, but leaving it like this
-    // in case we decide to collect both on a machine later
     char s[FNAME_BUF];
     char s2[FNAME_BUF];
 
@@ -257,12 +256,9 @@ setup_filenames (ThreadArgs *targs)
     memset (&targs->latency_outfile, 0, FNAME_BUF);
     memset (&targs->tput_outfile, 0, FNAME_BUF);
 
-    if (targs->tr) {
-        snprintf (s, FNAME_BUF, "%s/%s_%s.%d-latency.dat", args.outdir, args.outfile, args.machineid, 
-                targs->threadid);
-    } else {
-        snprintf (s2, FNAME_BUF, "%s/%s_%s-throughput.dat", args.outdir, args.outfile, args.machineid);
-    }
+    snprintf (s, FNAME_BUF, "%s/%s_%s.%d-latency.dat", args.outdir, args.outfile, args.machineid, 
+            targs->threadid);
+    snprintf (s2, FNAME_BUF, "%s/%s_%s-throughput.dat", args.outdir, args.outfile, args.machineid);
 
     memcpy (targs->latency_outfile, s, FNAME_BUF);
     memcpy (targs->tput_outfile, s2, FNAME_BUF);

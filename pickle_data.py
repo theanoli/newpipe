@@ -9,8 +9,8 @@ import pickle
 import subprocess
 import multiprocessing
 
-start_cutoff_duration = 5  # in seconds
-end_cutoff_duration = 1
+start_cutoff_duration = 10  # in seconds
+end_cutoff_duration = 10
 us_per_sec = 1e6
 
 def load_latency_file(fpath):
@@ -58,26 +58,28 @@ def load_client_data(experiment):
     latency_files = list(filter(lambda x: "latency.dat" in x, files))
     tput_files = list(filter(lambda x: "throughput.dat" in x, files))
     
-    if len(tput_files) > 1:
-        print("Found more than 1 throughput file, FYI... skipping others")
-    tput_file = tput_files[0]
+    client_tputs = []
+    for fname in tput_files:
+        df = load_tput_file(os.path.join(path_base, fname))
+        try:
+            tput = process_tput_dataframe(df)
+            starttime = tput['timestamp'].iloc[0]
+            start_cutoff = starttime + start_cutoff_duration * us_per_sec
+            endtime = tput['timestamp'].iloc[-1]
+            end_cutoff = endtime - end_cutoff_duration * us_per_sec
+            tput = tput[tput['timestamp'].between(start_cutoff, end_cutoff)]
 
-    df = load_tput_file(os.path.join(path_base, tput_file))
-    try:
-        tput = process_tput_dataframe(df)
-        starttime = tput['timestamp'].iloc[0]
-        start_cutoff = starttime + start_cutoff_duration * us_per_sec
-        endtime = tput['timestamp'].iloc[-1]
-        end_cutoff = endtime - end_cutoff_duration * us_per_sec
-        tput = tput[tput['timestamp'].between(start_cutoff, end_cutoff)]
-
-        # Set start time as earliest marked time, convert to usec
-        new_starttime = tput['timestamp'].iloc[0]
-        tput['timestamp'] = tput['timestamp'].apply(lambda x: (x - new_starttime)/us_per_sec)
-    except:
-        # Need to investigate what is wrong with this file; do not continue
-        print("%s: derped on file %s" % (experiment, tput_file))
-        raise
+            # Set start time as earliest marked time, convert to usec
+            new_starttime = tput['timestamp'].iloc[0]
+            tput['timestamp'] = tput['timestamp'].apply(lambda x: (x - new_starttime)/us_per_sec)
+            if 'client' in fname:
+                client_tputs.append(tput)
+            else:
+                server_tput = copy.deepcopy(tput)
+        except:
+            # Need to investigate what is wrong with this file; do not continue
+            print("%s: derped on file %s" % (experiment, fname))
+            raise
 
     latencies = []
     for fname in latency_files:
@@ -101,7 +103,7 @@ def load_client_data(experiment):
             raise
     
     #return pd.concat(latencies, ignore_index=True), tputs
-    return latencies, tput
+    return latencies, server_tput, client_tputs
 
 def load_config(experiment):
     settings = {}
@@ -117,13 +119,14 @@ def worker(experiment, return_dict):
     print("Loading experiment " + experiment)
 
     # Load/process data
-    latencies, tput = load_client_data(experiment)
+    latencies, server_tput, client_tputs = load_client_data(experiment)
 
     # Load/process config information
     config = load_config(experiment)
 
     return_dict[experiment] = {'latency': latencies,#.mean(),
-                          'throughput': tput,
+                          'server_tput': server_tput,
+                          'client_tputs': client_tputs,
                           'config': config,
                           'nclients': int(config['total_clients']),
                           'nclient_threads': int(config['nclient_threads']),

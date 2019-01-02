@@ -14,7 +14,7 @@ from plotly.offline import download_plotlyjs, init_notebook_mode, iplot
 from plotly.graph_objs import *
 #init_notebook_mode()
 
-title = "with increasing client thread count,<br>64 server threads, 5 trials"
+title = sys.argv[1]
 
 home = os.getcwd()
 results = os.path.join(home, 'results')
@@ -28,25 +28,38 @@ def throughput():
 
     data = []
     for exp, exp_data in experiment_dict.items():
-        x = exp_data['throughput']['timestamp']
-        y = exp_data['throughput']['tput']
-        text = []
+        nserver_threads = exp_data['nserver_threads']
+        nclients = exp_data['nclients']
+
+        x = exp_data['server_tput']['timestamp']
+        y = exp_data['server_tput']['tput']
 
         data.append(Scatter(x=x,
-                            y=y,
-                            name="%ds, %dcli" % (exp_data['nserver_threads'], exp_data['nclients']),
-                            mode='lines+markers',))
+            y=y,
+            legendgroup=exp,
+            name="%ds, %dcli" % (nserver_threads, nclients),
+            mode='lines+markers',))
 
-        layout = Layout(
-                title='Throughput over time per trial %s' % title,
-                showlegend=True,
-                xaxis=dict(title='time (s)'),
-                yaxis=dict(title='throughput (pps)')
-        )
+        for client_tput in exp_data['client_tputs']:
+            x = client_tput['timestamp']
+            y = client_tput['tput']
+            
+            data.append(Scatter(x=x,
+                y=y,
+                legendgroup=exp,
+                name="%ds, %dcli, ct" % (nserver_threads, nclients),
+                mode='lines+markers',))
 
-        fig = Figure(data=data, layout=layout)
-        plotly.offline.plot(fig, 
-                filename=os.path.join(results, 'throughput.html'))
+    layout = Layout(
+            title='Throughput over time per trial %s' % title,
+            showlegend=True,
+            xaxis=dict(title='time (s)'),
+            yaxis=dict(title='throughput (pps)')
+    )
+
+    fig = Figure(data=data, layout=layout)
+    plotly.offline.plot(fig, 
+            filename=os.path.join(results, 'throughput.html'))
 
 
 def latency_hist(data_dict):
@@ -140,11 +153,11 @@ def get_data_dict():
         dkey = (nservers, nclients)
 
         latencies = pd.concat([x for x in exp_data['latency']], ignore_index=True)
-        tputs = exp_data['throughput']['tput']
+        tputs = exp_data['server_tput']['tput']
 
         if dkey not in data_dict:
             data_dict[dkey] = {}
-            data_dict[dkey]['tputs'] = exp_data['throughput']['tput']
+            data_dict[dkey]['tputs'] = tputs
             data_dict[dkey]['latencies'] = latencies
         else:
             data_dict[dkey]['tputs'] = pd.concat([data_dict[dkey]['tputs'], 
@@ -156,7 +169,7 @@ def get_data_dict():
 
 
 print("--------------------------------------------------------------------------------")
-print("Generating plots!")
+print("Generating plots with title: \"%s\"" % title)
 data_dict = get_data_dict()
 throughput_latency(data_dict)
 throughput()

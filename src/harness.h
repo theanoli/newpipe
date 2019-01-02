@@ -28,9 +28,9 @@
 // starting measurements
 #define DEBUG 0
 #define STARTUP 4
-#define WARMUP 5
-#define COOLDOWN 1
-#define READTO 0  
+#define WARMUP 10
+#define COOLDOWN 10
+#define READTOUSEC 500000  
 
 // TCP-specific
 #if defined(TCP)

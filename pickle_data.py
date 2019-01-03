@@ -98,7 +98,7 @@ def load_client_data(experiment):
             latency['recvtime'] = latency['recvtime'].apply(lambda x: (x - new_starttime)/us_per_sec)
             latencies.append(latency[['latency', 'sendtime']])
         except IndexError:
-            print("%s: Index error on file %s" % (experiment, fname))
+            print("\t%s: Index error on file %s" % (experiment, fname))
             pass
         except:
             # Need to investigate what is wrong with this file; do not continue
@@ -136,7 +136,8 @@ def worker(experiment, return_dict):
                           'nserver_threads': int(config['nserver_threads']),
                           }
     print("Completed loading experiment %s" % experiment)
-    print("\tnclient_threads, total %d client threads, %d nserver_threads %d" % (
+    print("\t%s has: %d client_threads per machine, total %d client threads, %d server_threads" % (
+        experiment,
         return_dict[experiment]['nclient_threads'],
         return_dict[experiment]['nclients'],
         return_dict[experiment]['nserver_threads']))

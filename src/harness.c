@@ -105,11 +105,9 @@ main (int argc, char **argv)
         // Servers
 
         // Wait a few seconds to let clients come online
-        PrintPreciseTime ();
         printf ("Waiting for clients to start up and connect...\n"); 
         sleep (STARTUP);
 
-        PrintPreciseTime ();
         printf ("Entering warmup period...\n"); 
 
         // Start a recorder thread for throughput
@@ -120,17 +118,14 @@ main (int argc, char **argv)
         UpdateProgramState (warmup);
         sleep (WARMUP);
         
-        PrintPreciseTime ();
         printf ("Starting experiment period...\n");
         UpdateProgramState (experiment);
         sleep (args.expduration);
 
-        PrintPreciseTime ();
         printf ("Experiment over, cooling down...\n");
         UpdateProgramState (cooldown);
         sleep (COOLDOWN);
 
-        PrintPreciseTime ();
         printf ("All done!\n");
         UpdateProgramState (end);
         pthread_join (recorder_tid, NULL);

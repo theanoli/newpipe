@@ -123,13 +123,13 @@ TimestampTxRx (ThreadArgs *p)
         recvtime = PreciseWhen ();        
         (p->counter)++;
 
-        if ((!p->no_record) && (p->counter % 1000 == 0)) {
+        if ((!p->no_record) && (p->counter % 100 == 0)) {
             memset (wbuf, 0, PSIZE * 2);
             m = snprintf (wbuf, PSIZE, "%s", pbuf);
             snprintf (wbuf + m, PSIZE, "%lld,%.9ld\n", 
                     (long long) recvtime.tv_sec, recvtime.tv_nsec);
 
-            fwrite (wbuf, strlen (wbuf), 1, out);
+            m = fwrite (wbuf, 1, strlen (wbuf), out);
         }
 
         debug_print (p, DEBUG, "Got timestamp: %s, %d bytes read\n", pbuf, n);
@@ -397,7 +397,7 @@ establish (ThreadArgs *p)
     id_print (p, "Starting loop to wait for connections...\n");
 
     while (p->program_state == startup) {
-        nevents = epoll_wait (p->ep, events, MAXEVENTS, -1); 
+        nevents = epoll_wait (p->ep, events, MAXEVENTS, 0); 
         if (nevents < 0) {
             if (errno != EINTR) {
                 perror ("establish: epoll_wait");

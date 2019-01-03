@@ -47,7 +47,7 @@ def throughput():
         for client_tput in exp_data['client_tputs']:
             x = client_tput['timestamp']
             y = client_tput['tput']
-            
+        
             data.append(Scatter(x=x,
                 y=y,
                 legendgroup=exp,

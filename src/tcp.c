@@ -123,7 +123,7 @@ TimestampTxRx (ThreadArgs *p)
         recvtime = PreciseWhen ();        
         (p->counter)++;
 
-        if ((!p->no_record) && (p->counter % 100 == 0)) {
+        if ((!p->no_record) && (p->counter % 1000 == 0)) {
             memset (wbuf, 0, PSIZE * 2);
             m = snprintf (wbuf, PSIZE, "%s", pbuf);
             snprintf (wbuf + m, PSIZE, "%lld,%.9ld\n", 

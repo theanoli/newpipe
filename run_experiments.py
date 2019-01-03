@@ -107,8 +107,6 @@ class Experiment(object):
         # Launch the server-side program and then wait a bit 
         self.printer("Launching server...")
         
-        os.chdir(self.wdir)
-
         serv_cmd = (self.basecmd +
                 # -c should be the per-server thread #clients
                 " -c %d" % self.total_clients +  
@@ -119,9 +117,10 @@ class Experiment(object):
                 " -T %d" % self.nserver_threads)
         if self.collect_stats:
             serv_cmd += " -l"
-        cmd = shlex.split(serv_cmd)
+        ssh = "ssh -p 22 %s@%s.emulab.net 'cd %s; %s;'" % (self.whoami,
+                self.machine_dict['server-0']['machineid'], self.wdir, serv_cmd)
         self.printer("Launching server process: %s" % serv_cmd)
-        server = subprocess.Popen(cmd)
+        server = subprocess.Popen(shlex.split(ssh))
         return server
 
     def launch_clients(self):

@@ -3,13 +3,13 @@ echo "[`date +%s`] commit `git rev-parse HEAD`" >> results/README
 {
 ntrials=1
 counter=1
-while [ $counter -le 256 ]; do
+while [ $counter -le 16 ]; do
 
     trial=0
     while [ $trial -lt $ntrials ]; do
         echo Running with $counter client machines.
-        python run_experiments.py theano "./NPtcp" --expduration 30 --nclient_machines 1 --nclient_threads $counter --nserver_threads 16
-        echo Done with $counter client machines.
+        python run_experiments.py theano "./NPtcp" --expduration 30 --nclient_machines $counter --nclient_threads 32 --nserver_threads 16
+        echo Done with $counter server machines.
         echo
         ((trial=$trial+1))
     done
@@ -18,6 +18,6 @@ while [ $counter -le 256 ]; do
 done
 echo Experiments complete! Processing...
 
-bash process_data.sh "with increasing client thread count,<br>16 server threads, 1 client machine, 5 trials"
+bash process_data.sh "with increasing client machine count,<br>16 server threads, 32 client threads, 1 trial"
 echo All done!
 } |& tee -a results/log.txt

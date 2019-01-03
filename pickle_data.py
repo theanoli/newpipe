@@ -97,6 +97,9 @@ def load_client_data(experiment):
             latency['sendtime'] = latency['sendtime'].apply(lambda x: (x - new_starttime)/us_per_sec)
             latency['recvtime'] = latency['recvtime'].apply(lambda x: (x - new_starttime)/us_per_sec)
             latencies.append(latency[['latency', 'sendtime']])
+        except IndexError:
+            print("%s: Index error on file %s" % (experiment, fname))
+            pass
         except:
             # Need to investigate what is wrong with this file; do not continue
             print("%s: derped on file %s" % (experiment, fname))

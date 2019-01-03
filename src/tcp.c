@@ -147,7 +147,6 @@ Echo (ThreadArgs *p)
     int to_write;
     int written;
     char rcv_buf[PSIZE];
-    char *q;
 
     // Add a few-second delay to let the clients stabilize
     while (p->program_state == startup) {
@@ -184,48 +183,65 @@ Echo (ThreadArgs *p)
             } else if (events[i].events & EPOLLIN) {
                 // There's data to be read
                 done = 0;
-                q = rcv_buf;
+                to_write = 0;
                 memset (rcv_buf, 0, PSIZE);
 
-                // This is dangerous because rcv_buf is only PSIZE bytes long
-                // TODO figure this out
-                while ((j = read (events[i].data.fd, q, PSIZE)) > 0) {
-                    q += j;
+                while (1) {
+                    j = read (events[i].data.fd, rcv_buf + to_write, 
+                                PSIZE - to_write);
+                    if (j <= 0) {
+                        break;
+                    }
+                    to_write += j;
                 }
 
-                if (q - rcv_buf == 0) {
+                // Just in case
+                if (to_write == 0) {
                     printf ("towrite\n");
+                    exit (-122);
                 }
 
                 if (j == 0) {
+                    // The other side is disconnected
                     perror ("server read");
                     done = 1;  // Close this socket
                     nconnections--; 
-                } else if ((j < 0) && (errno != EAGAIN)) {
-                    perror ("server read");
-                    done = 1; 
-                } else {
-                    // We've read all the data; echo it back to the client
-                    to_write = q - rcv_buf;
-                    written = 0;
+                } else if (j < 0) {
+                    if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
+                        // We've read all the data; echo it back to the client
+                        written = 0;
 
-                    while ((j = write (events[i].data.fd, 
-                                    rcv_buf + written, to_write) + written) < to_write) {
-                        if (j < 0) {
-                            if (errno != EAGAIN) {
-                                perror ("server write");
-                                done = 1;
-                                nconnections--;
+                        while (1) {
+                            j = write (events[i].data.fd, rcv_buf + written, to_write - written);
+                            if (j < 0) {
+                                if ((errno != EAGAIN) && (errno != EWOULDBLOCK)) {
+                                    perror ("server write");
+                                    done = 1;
+                                    nconnections--;
+                                }
                                 break;
                             }
+                            written += j;
+                            if (to_write == written) {
+                                break;
+                            }
+                            printf ("Had to loop, to_write=%d, written=%d...\n", to_write, written);
                         }
-                        written += j;
-                        printf ("Had to loop...\n");
-                    }
 
-                    if (!done) {
-                        (p->counter)++;
-                    } 
+                        // Just in case
+                        if (written == 0) {
+                            printf ("written\n");
+                            exit (-122);
+                        }
+
+                        if (!done) {
+                            (p->counter)++;
+                        } 
+                    } else {
+                        perror ("server read2");
+                        done = 1; 
+                        nconnections--;
+                    }
                 }
 
                 if (done) {
@@ -310,8 +326,8 @@ Setup (ThreadArgs *p)
         }
 
         struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = READTOUSEC;
+        tv.tv_sec = READTO;
+        tv.tv_usec = 0;
         if (setsockopt (sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv) < 0) {
             printf ("tester: client: SO_RCVTIMEO failed! errno=%d\n", errno);
             exit (-7);

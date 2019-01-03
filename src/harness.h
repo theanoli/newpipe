@@ -30,7 +30,7 @@
 #define STARTUP 4
 #define WARMUP 10
 #define COOLDOWN 10
-#define READTOUSEC 0
+#define READTO 0
 
 // TCP-specific
 #if defined(TCP)

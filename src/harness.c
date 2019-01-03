@@ -176,7 +176,6 @@ ThreadEntry (void *vargp)
 void *
 ThroughputRecorder (void *vargp)
 {
-    printf ("In throughputRecorder...\n");
     ProgramArgs *args = (ProgramArgs *)vargp;
     
     if ((out = fopen (args->thread_data[0].tput_outfile, "wb")) == NULL) {
@@ -208,9 +207,6 @@ record_throughput (ProgramArgs *args, FILE *out)
     struct timespec now = PreciseWhen ();
 
     for (i = 0; i < args->nthreads; i++) {
-        if ((i == 0) && args->tr) {
-            printf ("Read %"PRIu64"\n", args->thread_data[i].counter);
-        }
         total_npackets += args->thread_data[i].counter;
     }
 

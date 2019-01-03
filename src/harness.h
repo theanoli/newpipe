@@ -30,7 +30,7 @@
 #define STARTUP 4
 #define WARMUP 10
 #define COOLDOWN 10
-#define READTOUSEC 500000  
+#define READTOUSEC 0
 
 // TCP-specific
 #if defined(TCP)
@@ -87,7 +87,7 @@ struct threadargs
     uint8_t     no_record;
 
     // for throughput measurements
-    uint64_t counter;       /* For counting packets!                        */
+    volatile uint64_t counter;       /* For counting packets!                        */
     volatile int ep;                 /* For epoll file descriptor                    */
     uint64_t retransmits;   /* Only useful for unreliable transports        */
 

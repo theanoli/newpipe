@@ -8,6 +8,7 @@ import copy
 import pickle
 import subprocess
 
+import colorlover as cl
 import plotly
 import plotly.plotly as py
 from plotly.offline import download_plotlyjs, init_notebook_mode, iplot
@@ -27,7 +28,9 @@ def throughput():
     print("Generating throughput over time...")
 
     data = []
+    i = 0
     for exp, exp_data in experiment_dict.items():
+        color = cl.scales['12']['qual']['Paired'][i % 12]
         nserver_threads = exp_data['nserver_threads']
         nclients = exp_data['nclients']
 
@@ -38,6 +41,7 @@ def throughput():
             y=y,
             legendgroup=exp,
             name="%ds, %dcli" % (nserver_threads, nclients),
+            line=dict(color=color),
             mode='lines+markers',))
 
         for client_tput in exp_data['client_tputs']:
@@ -47,8 +51,10 @@ def throughput():
             data.append(Scatter(x=x,
                 y=y,
                 legendgroup=exp,
+                line=dict(color=color),
                 name="%ds, %dcli, ct" % (nserver_threads, nclients),
                 mode='lines+markers',))
+        i += 1
 
     layout = Layout(
             title='Throughput over time per trial %s' % title,

@@ -46,6 +46,7 @@ LaunchThreads (ProgramArgs *pargs)
         targs[i].ncli = pargs->ncli;
         targs[i].ep = -1;
         targs[i].no_record = pargs->no_record;
+        targs[i].counter = 0;
 
         if (pargs->no_record) {
             printf ("Not recording measurements to file.\n");
@@ -82,8 +83,6 @@ TimestampTxRx (ThreadArgs *p)
     int n, m;
     struct timespec sendtime, recvtime;
     FILE *out;
-
-    p->counter = 0;
 
     // Open file for recording latency data
     if (p->tr && (!p->no_record)) {
@@ -122,7 +121,7 @@ TimestampTxRx (ThreadArgs *p)
         }
 
         recvtime = PreciseWhen ();        
-        p->counter++;
+        (p->counter)++;
 
         if ((!p->no_record) && (p->counter % 1000 == 0)) {
             memset (wbuf, 0, PSIZE * 2);
@@ -150,8 +149,6 @@ Echo (ThreadArgs *p)
     char rcv_buf[PSIZE];
     char *q;
 
-    p->counter = 0;
-
     // Add a few-second delay to let the clients stabilize
     while (p->program_state == startup) {
         // Should never be in this status in this function, 
@@ -176,7 +173,8 @@ Echo (ThreadArgs *p)
         for (i = 0; i < n; i++) {
             // Check for errors 
             if ((events[i].events & EPOLLERR) ||
-                    (events[i].events & EPOLLHUP)) {
+                    (events[i].events & EPOLLHUP) ||
+                    (events[i].events & !EPOLLIN)) {
                 printf ("epoll error!\n");
                 close (events[i].data.fd);
             } else if (events[i].data.fd == p->servicefd) {
@@ -191,15 +189,21 @@ Echo (ThreadArgs *p)
 
                 // This is dangerous because rcv_buf is only PSIZE bytes long
                 // TODO figure this out
-
                 while ((j = read (events[i].data.fd, q, PSIZE)) > 0) {
                     q += j;
                 }
 
-                if ((j == 0) || ((errno != EAGAIN) && (errno != EWOULDBLOCK))) {
+                if (q - rcv_buf == 0) {
+                    printf ("towrite\n");
+                }
+
+                if (j == 0) {
                     perror ("server read");
                     done = 1;  // Close this socket
                     nconnections--; 
+                } else if ((j < 0) && (errno != EAGAIN)) {
+                    perror ("server read");
+                    done = 1; 
                 } else {
                     // We've read all the data; echo it back to the client
                     to_write = q - rcv_buf;
@@ -420,7 +424,7 @@ establish (ThreadArgs *p)
 
                     // Add descriptor to epoll instance
                     event.data.fd = p->commfd;
-                    event.events = EPOLLIN;  // TODO check this
+                    event.events = EPOLLIN | EPOLLET;  // TODO check this
 
                     if (epoll_ctl (p->ep, EPOLL_CTL_ADD, p->commfd, &event) < 0) {
                         perror ("epoll_ctl");

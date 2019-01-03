@@ -93,7 +93,10 @@ main (int argc, char **argv)
         // for the server threads to start before trying to connect
         // During STARTUP, client threads will be connecting to the server.
         sleep (STARTUP);
+
+        // Throughput recorder thread
         pthread_create (&recorder_tid, NULL, ThroughputRecorder, (void *)&args);
+
         UpdateProgramState (experiment); // start sending
         sleep (WARMUP + args.expduration + COOLDOWN);
         UpdateProgramState (end);
@@ -173,6 +176,7 @@ ThreadEntry (void *vargp)
 void *
 ThroughputRecorder (void *vargp)
 {
+    printf ("In throughputRecorder...\n");
     ProgramArgs *args = (ProgramArgs *)vargp;
     
     if ((out = fopen (args->thread_data[0].tput_outfile, "wb")) == NULL) {
@@ -204,6 +208,9 @@ record_throughput (ProgramArgs *args, FILE *out)
     struct timespec now = PreciseWhen ();
 
     for (i = 0; i < args->nthreads; i++) {
+        if ((i == 0) && args->tr) {
+            printf ("Read %"PRIu64"\n", args->thread_data[i].counter);
+        }
         total_npackets += args->thread_data[i].counter;
     }
 

@@ -3,7 +3,7 @@ echo "[`date +%s`] commit `git rev-parse HEAD`" >> results/README
 {
 ntrials=1
 counter=1
-while [ $counter -le 16 ]; do
+while [ $counter -le 1 ]; do
 
     trial=0
     while [ $trial -lt $ntrials ]; do

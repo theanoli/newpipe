@@ -16,9 +16,14 @@ from plotly.graph_objs import *
 #init_notebook_mode()
 
 title = sys.argv[1]
+try:
+    results_dir = sys.argv[2]
+except:
+    results_dir = 'results'
 
 home = os.getcwd()
-results = os.path.join(home, 'results')
+results = os.path.join(home, results_dir)
+
 with open(os.path.join(results, 'experiment_dict.pickle'), 'rb') as f:
     experiment_dict = pickle.load(f)
 

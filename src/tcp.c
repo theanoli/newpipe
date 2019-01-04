@@ -60,14 +60,15 @@ LaunchThreads (ProgramArgs *pargs)
 
         pthread_create (&pargs->tids[i], NULL, ThreadEntry, (void *)&targs[i]);
         
-        // Always pin cores
-        nprocs_onln = get_nprocs ();
-        CPU_ZERO (&cpuset);
-        CPU_SET (i % nprocs_onln, &cpuset);
-        ret = pthread_setaffinity_np (pargs->tids[i], sizeof (cpu_set_t), &cpuset);
-        if (ret != 0) {
-            printf ("[%s] Couldn't pin thread %d to core!\n", pargs->machineid, i);
-            exit (-14);
+        if (pargs->pin_threads) {
+            nprocs_onln = get_nprocs ();
+            CPU_ZERO (&cpuset);
+            CPU_SET (i % nprocs_onln, &cpuset);
+            ret = pthread_setaffinity_np (pargs->tids[i], sizeof (cpu_set_t), &cpuset);
+            if (ret != 0) {
+                printf ("[%s] Couldn't pin thread %d to core!\n", pargs->machineid, i);
+                exit (-14);
+            }
         }
     }
 }

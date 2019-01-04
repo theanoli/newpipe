@@ -33,6 +33,8 @@ class Experiment(object):
         self.collect_stats = args.collect_stats
         self.expduration = args.expduration
         self.no_pin_procs = args.no_pin_procs
+        self.unpin_sthreads = args.unpin_sthreads
+        self.unpin_cthreads = args.unpin_cthreads
 
         self.machine_dict, self.clients, self.servers = self.read_machine_info()
         self.clients = self.clients[:self.nclient_machines]
@@ -117,6 +119,9 @@ class Experiment(object):
                 " -T %d" % self.nserver_threads)
         if self.collect_stats:
             serv_cmd += " -l"
+        if not self.unpin_sthreads:
+            serv_cmd += " -i"
+
         ssh = "ssh -p 22 %s@%s.emulab.net 'cd %s; %s;'" % (self.whoami,
                 self.machine_dict['server-0']['machineid'], self.wdir, serv_cmd)
         self.printer("Launching server process: %s" % serv_cmd)
@@ -138,6 +143,8 @@ class Experiment(object):
                     " -u %d" % self.expduration + 
                     " -T %d" % (self.nclient_threads) +
                     " -P %d" % self.start_port)
+            if not self.unpin_cthreads:
+                serv_cmd += " -i"
 
             ssh = "ssh -p 22 %s@%s.emulab.net 'cd %s; %s'" % (self.whoami, 
                     self.machine_dict[client]['machineid'], self.wdir, cmd)
@@ -190,13 +197,15 @@ if __name__ == "__main__":
             help=('Set throughput experiment duration. Default %ds.', 
                 default_expduration),
             default=default_expduration)
-    parser.add_argument('--no_pin_procs',
-            help=('Pin each process to a core.'),
+    parser.add_argument('--unpin_sthreads',
+            help=('Don\'t pin server threads to cores.'),
+            action='store_true')
+    parser.add_argument('--unpin_cthreads',
+            help=('Don\'t pin client threads to cores.'),
             action='store_true')
     parser.add_argument('--outfile',
             help=('Base name for experiments'),
             default=None)
-    
 
     args = parser.parse_args()
 

@@ -40,7 +40,7 @@ main (int argc, char **argv)
     args.program_state = startup;
 
     /* Parse the arguments. See Usage for description */
-    while ((c = getopt (argc, argv, "no:d:H:T:c:P:tu:l")) != -1)
+    while ((c = getopt (argc, argv, "no:d:H:T:c:P:u:li")) != -1)
     {
         switch (c)
         {
@@ -70,6 +70,9 @@ main (int argc, char **argv)
                       break;
 
             case 'u': args.expduration = atoi (optarg);
+                      break;
+
+            case 'i': args.pin_threads = 1;
                       break;
 
             case 'l': args.collect_stats = 1;

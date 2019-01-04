@@ -126,15 +126,24 @@ def throughput_latency(data_dict):
 
     keys = sort_dict_keys(data_dict)
 
-    x = [data_dict[key]['tput_stat'] for key in keys]  # throughout
-    y = [data_dict[key]['latency_stat'] for key in keys] # latency
+    grouped_data_dict = {}
 
-    data = Scatter(x=x,
-            y=y,
+    for (nservers, nclients) in keys: 
+        if nservers not in grouped_data_dict:
+            grouped_data_dict[nservers] = {'x': [], 'y': [], 'nclients': []}
+        grouped_data_dict[nservers]['x'].append(data_dict[(nservers, nclients)]['tput_stat'])
+        grouped_data_dict[nservers]['y'].append(data_dict[(nservers, nclients)]['latency_stat'])
+        grouped_data_dict[nservers]['nclients'].append(nclients)
+
+    data = []
+    for nservers, grouped_data in grouped_data_dict.items():
+        data.append(Scatter(x=grouped_data['x'],
+            y=grouped_data['y'],
             mode='lines+markers+text',
-            textposition='top left',
-            text=["%ds, %dcli" % (nserv, ncli) for nserv, ncli in keys],
-            )
+            name='%s servers' % nservers,
+            textposition='top right',
+            text=["%d" % x for x in grouped_data['nclients']],
+            ))
 
     layout = Layout(
             title="Mean throughput/median latency %s" % title,
@@ -142,7 +151,7 @@ def throughput_latency(data_dict):
             yaxis=dict(title='latency (usec)'),
             )
 
-    fig = Figure(data=[data], layout=layout)
+    fig = Figure(data=data, layout=layout)
     plotly.offline.plot(fig, 
             filename=os.path.join(results, 'tputlatency.html'))
 
@@ -178,8 +187,8 @@ print("-------------------------------------------------------------------------
 print("Generating plots with title: \"%s\"" % title)
 data_dict = get_data_dict()
 throughput_latency(data_dict)
-throughput()
-latency_hist(data_dict)
-latency_box(data_dict)
+#throughput()
+#latency_hist(data_dict)
+#latency_box(data_dict)
 print("Done!")
 print("--------------------------------------------------------------------------------\n")

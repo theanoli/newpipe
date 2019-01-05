@@ -1,6 +1,9 @@
 echo "[`date +%s`] commit `git rev-parse HEAD`" >> results/README
 
 title="with increasing client thread count,<br>32 client threads/machine, 3 trials"
+cp generate_plot.py results
+cp pickle_data.py results
+cp experiment_batch_script.sh results
 
 {
 ntrials=1
@@ -19,7 +22,6 @@ while [ $nserver_threads -le 32 ]; do
                 $nclient_threads client threads
             python run_experiments.py theano "./NPtcp" \
                 --expduration 30 \
-                --unpin_sthreads \
                 --nclient_machines $nclient_machines \
                 --nclient_threads $nclient_threads \
                 --nserver_threads $nserver_threads

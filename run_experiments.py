@@ -32,7 +32,6 @@ class Experiment(object):
 
         self.collect_stats = args.collect_stats
         self.expduration = args.expduration
-        self.no_pin_procs = args.no_pin_procs
         self.unpin_sthreads = args.unpin_sthreads
         self.unpin_cthreads = args.unpin_cthreads
 
@@ -144,7 +143,7 @@ class Experiment(object):
                     " -T %d" % (self.nclient_threads) +
                     " -P %d" % self.start_port)
             if not self.unpin_cthreads:
-                serv_cmd += " -i"
+                cmd += " -i"
 
             ssh = "ssh -p 22 %s@%s.emulab.net 'cd %s; %s'" % (self.whoami, 
                     self.machine_dict[client]['machineid'], self.wdir, cmd)

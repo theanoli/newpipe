@@ -116,6 +116,8 @@ struct programargs
 
     // Possibly obsolete
     int     ncli;           /* For throughput: number of clients in exp     */
+    
+    uint8_t pin_threads;
 };
 
 typedef struct data Data;

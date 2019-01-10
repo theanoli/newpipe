@@ -23,6 +23,7 @@
 #define DEFPORT 8000
 #define MAXEVENTS 8192
 #define FNAME_BUF 256
+#define LBUFSIZE 512
 
 // For throughput experiments: time to wait before
 // starting measurements
@@ -76,7 +77,8 @@ struct threadargs
 
     int     servicefd;     /* File descriptor of the network socket         */
     int        commfd;        /* Communication file descriptor                 */
-    short   port;          /* Port used for connection                      */
+    short   port;          /* Port used for connection/listening */
+    short   myport;         /* local port to bind to */
     ProtocolStruct prot;   /* Protocol-depended stuff                       */
 
     char    *host;          /* Name of receiving host                       */
@@ -85,6 +87,10 @@ struct threadargs
     uint16_t     ncli;           /* #server threads if tr; #client threads per 
                                server thread if rcv                         */
     uint8_t     no_record;
+    char *      lbuf;               /* buffer for latency 
+                                       measurements */
+    uint16_t     lbuf_offset;             /* where to write next
+                                       latency value */
 
     // for throughput measurements
     volatile uint64_t counter;       /* For counting packets!                        */

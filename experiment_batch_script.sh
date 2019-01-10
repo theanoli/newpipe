@@ -1,20 +1,24 @@
+sudo pip3 install colorlover
+
 echo "[`date +%s`] commit `git rev-parse HEAD`" >> results/README
 
-title="with increasing client thread count,<br>32 client threads/machine, 3 trials"
 cp generate_plot.py results
 cp pickle_data.py results
 cp experiment_batch_script.sh results
 
 {
-ntrials=1
+ntrials=3
 counter=1
-nclient_threads=32
-nserver_threads=1
+nclient_threads=16
+nserver_threads=4
 
-while [ $nserver_threads -le 32 ]; do
+title="with increasing client thread count,<br>$nserver_threads server threads/machine, \
+    $nclient_threads client threads/machine, $ntrials trial(s)"
+
+while [ $nserver_threads -le 128 ]; do
 
     nclient_machines=1
-    while [ $nclient_machines -le 16 ]; do
+    while [ $nclient_machines -le 1 ]; do
         trial=0
         while [ $trial -lt $ntrials ]; do
             echo Trial $trial: Running with $nclient_machines client machines, \

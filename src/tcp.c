@@ -37,6 +37,12 @@ LaunchThreads (ProgramArgs *pargs)
 
         // All clients will connect to the same server port
         targs[i].port = pargs->port;
+        if (pargs->tr) {
+            // All client threads will bind to a different local port
+            targs[i].myport = pargs->port + i;
+        } else {
+            targs[i].myport = pargs->port;
+        }
         targs[i].host = pargs->host;
         targs[i].tr = pargs->tr;
         targs[i].program_state = startup;
@@ -52,6 +58,15 @@ LaunchThreads (ProgramArgs *pargs)
             printf ("Not recording measurements to file.\n");
         } else {    
             setup_filenames (&targs[i]);
+            if (pargs->tr) {
+                targs[i].lbuf = (char *) malloc (LBUFSIZE);
+                if (targs[i].lbuf == NULL) {
+                    printf ("Couldn't allocate space for latency buffer! Exiting...\n");
+                    exit (-14);
+                }
+                targs[i].lbuf_offset = 0;
+                memset (targs[i].lbuf, 0, LBUFSIZE);
+            }
         }
 
         // printf ("[%s] Launching thread %d, ", pargs->machineid, i);
@@ -80,7 +95,6 @@ TimestampTxRx (ThreadArgs *p)
     // Send and then receive an echoed timestamp.
     // Return a pointer to the stored timestamp. 
     char pbuf[PSIZE];  // for packets
-    char wbuf[PSIZE * 2];  // for send,rcv time, to write to file
     int n, m;
     struct timespec sendtime, recvtime;
     FILE *out;
@@ -102,7 +116,7 @@ TimestampTxRx (ThreadArgs *p)
     // startup phase
     while (p->program_state == experiment) {
         sendtime = PreciseWhen ();
-        snprintf (pbuf, PSIZE, "%lld,%.9ld,",
+        snprintf (pbuf, PSIZE, "%lld,%.9ld",
                 (long long) sendtime.tv_sec, sendtime.tv_nsec);
 
         n = write (p->commfd, pbuf, PSIZE - 1);
@@ -125,12 +139,19 @@ TimestampTxRx (ThreadArgs *p)
         (p->counter)++;
 
         if ((!p->no_record) && (p->counter % 1000 == 0)) {
-            memset (wbuf, 0, PSIZE * 2);
-            m = snprintf (wbuf, PSIZE, "%s", pbuf);
-            snprintf (wbuf + m, PSIZE, "%lld,%.9ld\n", 
-                    (long long) recvtime.tv_sec, recvtime.tv_nsec);
-
-            m = fwrite (wbuf, 1, strlen (wbuf), out);
+            if (p->lbuf_offset > (LBUFSIZE - 41)) {
+                // Flush the buffer to file
+                // 41 is longest possible write
+                fwrite (p->lbuf, 1, p->lbuf_offset, out);
+                memset (p->lbuf, 0, LBUFSIZE);
+                p->lbuf_offset = 0;
+            } else {
+                // There's more capacity in the buffer
+                m = snprintf (p->lbuf + p->lbuf_offset, PSIZE*2, "%s,%lld,%.9ld\n", 
+                        pbuf,
+                        (long long) recvtime.tv_sec, recvtime.tv_nsec);
+                p->lbuf_offset += m;
+            }
         }
 
         debug_print (p, DEBUG, "Got timestamp: %s, %d bytes read\n", pbuf, n);
@@ -281,20 +302,18 @@ Setup (ThreadArgs *p)
     hints.ai_family     = socket_family;
     hints.ai_socktype   = SOCK_STREAM;
 
-    lsin1 = &(p->prot.sin1);
-    lsin2 = &(p->prot.sin2);
+    lsin1 = &(p->prot.sin1);  // my info
+    lsin2 = &(p->prot.sin2);  // remote info
     
     memset ((char *) lsin1, 0, sizeof (*lsin1));
     memset ((char *) lsin2, 0, sizeof (*lsin2));
-    sprintf (portno, "%d", p->port);
+
+    sprintf (portno, "%d", p->port);  // the port you will connect to
+
+    lsin1->sin_family       = AF_INET;
+    lsin1->sin_addr.s_addr  = htonl (INADDR_ANY);
+    lsin1->sin_port         = htons (p->myport);  // the port you will bind to
     
-    p->ep = epoll_create (MAXEVENTS);
-
-    flags = SOCK_STREAM;
-    if (!p->tr) {
-        flags |= SOCK_NONBLOCK;
-    } 
-
     if (!(proto = getprotobyname ("tcp"))) {
         printf ("tester: protocol 'tcp' unknown!\n");
         exit (555);
@@ -312,6 +331,11 @@ Setup (ThreadArgs *p)
                     rp->ai_protocol);
             if (sockfd == -1) {
                 continue;
+            }
+
+            if (bind (sockfd, (struct sockaddr *) lsin1, sizeof (*lsin1)) < 0) {
+                printf ("tester: client: bind on local address failed! errno=%d\n", errno);
+                exit (-6);
             }
 
             if (connect (sockfd, rp->ai_addr, rp->ai_addrlen) != -1) {
@@ -339,6 +363,10 @@ Setup (ThreadArgs *p)
         p->commfd = sockfd;
 
     } else {
+        p->ep = epoll_create (MAXEVENTS);
+
+        flags = SOCK_STREAM | SOCK_NONBLOCK;
+
         if ((sockfd = socket (socket_family, flags, 0)) < 0) {
             printf ("tester: can't open stream socket!\n");
             exit (-4);
@@ -353,11 +381,6 @@ Setup (ThreadArgs *p)
             printf ("tester: server: SO_REUSEPORT failed! errno=%d\n", errno);
             exit (-7);
         }
-
-        memset ((char *) lsin1, 0, sizeof (*lsin1));
-        lsin1->sin_family       = AF_INET;
-        lsin1->sin_addr.s_addr  = htonl (INADDR_ANY);
-        lsin1->sin_port         = htons (p->port);
 
         if (bind (sockfd, (struct sockaddr *) lsin1, sizeof (*lsin1)) < 0) {
             printf ("tester: server: bind on local address failed! errno=%d\n", errno);

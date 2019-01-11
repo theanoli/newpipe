@@ -21,7 +21,7 @@
 
 #define PSIZE   32
 #define DEFPORT 8000
-#define MAXEVENTS 8192
+#define MAXEVENTS 16
 #define FNAME_BUF 256
 #define LBUFSIZE 512
 

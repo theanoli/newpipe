@@ -37,12 +37,6 @@ LaunchThreads (ProgramArgs *pargs)
 
         // All clients will connect to the same server port
         targs[i].port = pargs->port;
-        if (pargs->tr) {
-            // All client threads will bind to a different local port
-            targs[i].myport = pargs->port + i;
-        } else {
-            targs[i].myport = pargs->port;
-        }
         targs[i].host = pargs->host;
         targs[i].tr = pargs->tr;
         targs[i].program_state = startup;
@@ -308,11 +302,8 @@ Setup (ThreadArgs *p)
     memset ((char *) lsin1, 0, sizeof (*lsin1));
     memset ((char *) lsin2, 0, sizeof (*lsin2));
 
-    sprintf (portno, "%d", p->port);  // the port you will connect to
+    sprintf (portno, "%d", p->port);  // the port client will connect to
 
-    lsin1->sin_family       = AF_INET;
-    lsin1->sin_addr.s_addr  = htonl (INADDR_ANY);
-    lsin1->sin_port         = htons (p->myport);  // the port you will bind to
     
     if (!(proto = getprotobyname ("tcp"))) {
         printf ("tester: protocol 'tcp' unknown!\n");
@@ -331,11 +322,6 @@ Setup (ThreadArgs *p)
                     rp->ai_protocol);
             if (sockfd == -1) {
                 continue;
-            }
-
-            if (bind (sockfd, (struct sockaddr *) lsin1, sizeof (*lsin1)) < 0) {
-                printf ("tester: client: bind on local address failed! errno=%d\n", errno);
-                exit (-6);
             }
 
             if (connect (sockfd, rp->ai_addr, rp->ai_addrlen) != -1) {
@@ -363,6 +349,10 @@ Setup (ThreadArgs *p)
         p->commfd = sockfd;
 
     } else {
+        lsin1->sin_family       = AF_INET;
+        lsin1->sin_addr.s_addr  = htonl (INADDR_ANY);
+        lsin1->sin_port         = htons (p->port);  // the port server will bind to
+
         p->ep = epoll_create (MAXEVENTS);
 
         flags = SOCK_STREAM | SOCK_NONBLOCK;

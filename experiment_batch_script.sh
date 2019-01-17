@@ -1,6 +1,6 @@
 sudo pip3 install colorlover
 
-make tcp 
+make mtcp 
 
 echo "[`date +%s`] commit `git rev-parse HEAD`" >> results/README
 
@@ -25,7 +25,7 @@ while [ $nserver_threads -le 32 ]; do
             echo Trial $trial: Running with $nclient_machines client machines, \
                 $nserver_threads server threads, \
                 $nclient_threads client threads
-            python run_experiments.py theano "./NPtcp" \
+            python run_experiments.py theano "sudo ./NPmtcp" \
                 --expduration 30 \
                 --nclient_machines $nclient_machines \
                 --nclient_threads $nclient_threads \

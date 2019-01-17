@@ -21,7 +21,7 @@
 
 #define PSIZE   32
 #define DEFPORT 8000
-#define MAXEVENTS 16
+#define MAXEVENTS 4
 #define FNAME_BUF 256
 #define LBUFSIZE 512
 
@@ -50,9 +50,27 @@
       int                     sndbufsz, /* Size of TCP send buffer        */
                               rcvbufsz; /* Size of TCP receive buffer     */
   };
+#elif defined(MTCP)
+  #include <netdb.h>
+  #include <netinet/in.h>
+  #include <netinet/tcp.h>
+  #include <arpa/inet.h>
+    
+  #include <mtcp_api.h>
+  #include <mtcp_epoll.h>
+
+  typedef struct protocolstruct ProtocolStruct;
+  struct protocolstruct
+  {
+      struct sockaddr_in      sin1,   /* socket structure #1              */
+                              sin2;   /* socket structure #2              */
+      int                     nodelay;  /* Flag for TCP nodelay           */
+      struct hostent          *addr;    /* Address of host                */
+      int                     sndbufsz, /* Size of TCP send buffer        */
+                              rcvbufsz; /* Size of TCP receive buffer     */
+      mctx_t                  mctx;
+  };
 #else 
-  // For now, we only have one option; will have more when we define our own
-  // protocol TODO
   #error "TCP must be defined during compilation!"
 #endif
 

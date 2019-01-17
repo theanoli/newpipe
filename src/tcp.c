@@ -303,7 +303,6 @@ Setup (ThreadArgs *p)
     memset ((char *) lsin2, 0, sizeof (*lsin2));
 
     sprintf (portno, "%d", p->port);  // the port client will connect to
-
     
     if (!(proto = getprotobyname ("tcp"))) {
         printf ("tester: protocol 'tcp' unknown!\n");

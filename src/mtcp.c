@@ -1,65 +1,15 @@
 #include "harness.h"
 
-#include <mtcp_api.h>
-#include <mtcp_epoll.h>
-
-#define DEBUG 0
-#define WARMUP 3
-#define COOLDOWN 5
-
-int doing_reset = 0;
-int ep = -1;
-
-mctx_t mctx = NULL;
-
-int mtcp_write_helper (mctx_t, int, char *, int);
-int mtcp_read_helper (mctx_t, int, char *, int);
-
-int
-mtcp_accept_helper (mctx_t mctx, int sockid, struct sockaddr *addr,
-                    socklen_t *addrlen)
-{
-    int nevents, i;
-    struct mtcp_epoll_event events[MAXEVENTS];
-    struct mtcp_epoll_event event;
-
-    event.events = MTCP_EPOLLIN;
-    event.data.sockid = sockid;
-
-    if (mtcp_epoll_ctl (mctx, ep, MTCP_EPOLL_CTL_ADD, sockid, &event) == -1) {
-        perror ("epoll_ctl");
-        exit (1);
-    }
-
-    while (1) {
-        nevents = mtcp_epoll_wait (mctx, ep, events, MAXEVENTS, -1);
-        if (nevents < 0) {
-            if (errno != EINTR) {
-                perror ("mtcp_epoll_wait");
-            }
-            exit (1);
-        }
-
-        // Wait for an incoming connection; return when we get one
-        for (i = 0; i < nevents; i++) {
-            if (events[i].data.sockid == sockid) {
-                // New connection incoming...
-                mtcp_epoll_ctl (mctx, ep, MTCP_EPOLL_CTL_DEL, sockid, NULL);
-                return mtcp_accept (mctx, sockid, addr, addrlen);
-            } else {
-                printf ("Socket error!\n");
-                exit (1);
-            }
-        }
-    }
-}
-
-
 void
 Init (ProgramArgs *pargs, int *pargc, char ***pargv)
 {
     ThreadArgs *p = (ThreadArgs *)calloc (pargs->nthreads, 
             sizeof (ThreadArgs));
+
+    if (p == NULL) {
+        printf ("Error malloc'ing space for thread args!\n");
+        exit (-10);
+    }
     
     pargs->thread_data = p;
 
@@ -71,7 +21,7 @@ Init (ProgramArgs *pargs, int *pargc, char ***pargv)
 
     struct mtcp_conf mcfg;
     mtcp_getconf (&mcfg);
-    mcfg.num_cores = 1;  // TODO check this
+    mcfg.num_cores = pargs->nthreads;
     mtcp_setconf (&mcfg);
 	mtcp_init ("mtcp.conf");
 }
@@ -81,8 +31,8 @@ void
 LaunchThreads (ProgramArgs *pargs)
 {
     int i, ret;
-    cpu_set_t cpuset;
     int nprocs_onln;
+    cpu_set_t cpuset;
 
     ThreadArgs *targs = pargs->thread_data;
 
@@ -95,22 +45,32 @@ LaunchThreads (ProgramArgs *pargs)
         targs[i].port = pargs->port;
         targs[i].host = pargs->host;
         targs[i].tr = pargs->tr;
-        targs[i].latency = pargs->latency;
+        targs[i].program_state = startup;
 
         // For servers, this is how many clients from which to expect connections.
         // For clients, this is how many total server threads there are. 
         targs[i].ncli = pargs->ncli;
         targs[i].ep = -1;
         targs[i].no_record = pargs->no_record;
+        targs[i].counter = 0;
 
         if (pargs->no_record) {
             printf ("Not recording measurements to file.\n");
         } else {    
             setup_filenames (&targs[i]);
+            if (pargs->tr) {
+                targs[i].lbuf = (char *) malloc (LBUFSIZE);
+                if (targs[i].lbuf == NULL) {
+                    printf ("Couldn't allocate space for latency buffer! Exiting...\n");
+                    exit (-14);
+                }
+                targs[i].lbuf_offset = 0;
+                memset (targs[i].lbuf, 0, LBUFSIZE);
+            }
         }
 
-        printf ("[%s] Launching thread %d, ", pargs->machineid, i);
-        printf ("connecting to portno %d\n", targs[i].port);
+        // printf ("[%s] Launching thread %d, ", pargs->machineid, i);
+        // printf ("connecting to portno %d\n", targs[i].port);
         fflush (stdout);
 
         pthread_create (&pargs->tids[i], NULL, ThreadEntry, (void *)&targs[i]);
@@ -134,11 +94,10 @@ TimestampTxRx (ThreadArgs *p)
     // Send and then receive an echoed timestamp.
     // Return a pointer to the stored timestamp. 
     char pbuf[PSIZE];  // for packets
-    char wbuf[PSIZE * 2];  // for send,rcv time, to write to file
     int n, m;
-    uint64_t count = 0;  // packet counter for sampling
     struct timespec sendtime, recvtime;
     FILE *out;
+    mctx_t mctx = p->prot.mctx;
 
     // Open file for recording latency data
     if (p->tr && (!p->no_record)) {
@@ -157,8 +116,8 @@ TimestampTxRx (ThreadArgs *p)
     // startup phase
     while (p->program_state == experiment) {
         sendtime = PreciseWhen ();
-        snprintf (pbuf, PSIZE, "%lld,%.9ld%-31s",
-                (long long) sendtime.tv_sec, sendtime.tv_nsec, ",");
+        snprintf (pbuf, PSIZE, "%lld,%.9ld",
+                (long long) sendtime.tv_sec, sendtime.tv_nsec);
 
         n = mtcp_write (mctx, p->commfd, pbuf, PSIZE - 1);
         if (n < 0) {
@@ -177,14 +136,22 @@ TimestampTxRx (ThreadArgs *p)
         }
 
         recvtime = PreciseWhen ();        
+        (p->counter)++;
 
-        if ((!p->no_record) && (count % 100 == 0)) {
-            memset (wbuf, 0, PSIZE * 2);
-            m = snprintf (wbuf, PSIZE, "%s", pbuf);
-            snprintf (wbuf + m, PSIZE, "%lld,%.9ld\n", 
-                    (long long) recvtime.tv_sec, recvtime.tv_nsec);
-
-            fwrite (wbuf, strlen (wbuf), 1, out);
+        if ((!p->no_record) && (p->counter % 1000 == 0)) {
+            if (p->lbuf_offset > (LBUFSIZE - 41)) {
+                // Flush buffer to fie
+                // 41 is the longest possible write
+                fwrite (p->lbuf, 1, p->lbuf_offset, out);
+                memset (p->lbuf, 0, LBUFSIZE);
+                p->lbuf_offset = 0;
+            } else {
+                // More capacity in the buffer
+                m = snprintf (p->lbuf + p->lbuf_offset, PSIZE*2, "%s,%lld,%.9ld\n",
+                        pbuf,
+                        (long long) recvtime.tv_sec, recvtime.tv_nsec);
+                p->lbuf_offset += m;
+            }
         }
 
         debug_print (p, DEBUG, "Got timestamp: %s, %d bytes read\n", pbuf, n);
@@ -199,15 +166,20 @@ Echo (ThreadArgs *p)
     // Loop through for expduration seconds and count each packet you send out
     // Start counting packets after a few seconds to stabilize connection(s)
     int j, n, i, done;
+    int nconnections = p->ncli;
     struct mtcp_epoll_event events[MAXEVENTS];
+    int to_write;
+    int written;
+    char rcv_buf[PSIZE];
+    mctx_t mctx = p->prot.mctx;
 
-    p->counter = 0;
-
+    // Add a few-second delay to let clients stabilize...
     while (p->program_state == startup) {
-            // spin
+        // Should never be in this status in this function, 
+        // but just in case
     }
 
-    id_print (p, "Entering packet receive mode...\n");
+    // id_print (p, "Entering packet receive mode...\n");
 
     while (p->program_state != end) {
         n = mtcp_epoll_wait (mctx, p->ep, events, MAXEVENTS, 1);
@@ -225,14 +197,9 @@ Echo (ThreadArgs *p)
             // Check for errors
             if ((events[i].events & EPOLLERR) ||
                     (events[i].events & EPOLLHUP) ||
-                    !(events[i].events & EPOLLIN)) {
+                    (events[i].events & !EPOLLIN)) {
                 printf ("epoll error!\n");
                 close (events[i].data.sockid);
-                if (p->latency) {
-                    exit (1);
-                } else {
-                    continue;
-                }
             } else if (events[i].data.sockid == p->servicefd) {
                 // Someone is trying to connect; ignore. All clients should have
                 // connected already.
@@ -240,70 +207,92 @@ Echo (ThreadArgs *p)
             } else {
                 // There's data to be read
                 done = 0;
-                int to_write;
-                int written;
-                char rcv_buf[PSIZE];
-                char *q;
+                to_write = 0;
+                memset (rcv_buf, 0, PSIZE);
 
-                // This is dangerous because rcv_buf is only PSIZE bytes long
-                // TODO figure this out
-                q = rcv_buf;
-
-                while ((j = mtcp_read (mctx, events[i].data.sockid, q, PSIZE)) > 0) {
-                    q += j;
-                }
-                
-                if (errno != EAGAIN) {
-                    if (j < 0) {
-                        perror ("server read");
+                while (1) {
+                    j = mtcp_read (mctx, events[i].data.sockid, rcv_buf + to_write,
+                            PSIZE - to_write);
+                    if (j <= 0) {
+                        break;
                     }
-                    done = 1;  // Close this socket
-                } else {
-                    // We've read all the data; echo it back to the client
-                    to_write = q - rcv_buf;
-                    written = 0;
-                    
-                    while ((j = mtcp_write (mctx, events[i].data.sockid, 
-                                    rcv_buf + written, to_write) + written) < to_write) {
-                        if (j < 0) {
-                            if (errno != EAGAIN) {
-                                perror ("server write");
-                                done = 1;
+                    to_write += j;
+                }
+
+                // Just in case
+                if (to_write == 0) {
+                    printf ("towrite\n");
+                    exit (-122);
+                }
+
+                if (j == 0) {
+                    // Other side is disconnected
+                    perror ("server read");
+                    done = 1;
+                    nconnections--;
+                } else if (j < 0) {
+                    if (errno == EAGAIN) {
+                        // We read everything; echo back to the client
+                        written = 0;
+                
+                        while (1) {
+                            j = mtcp_write (mctx, events[i].data.sockid,
+                                    rcv_buf + written, to_write - written);
+                            if (j < 0) {
+                                if (errno != EAGAIN) {
+                                    perror ("server write");
+                                    done = 1;
+                                    nconnections--;
+                                }
                                 break;
                             }
+                            written += j;
+                            if (to_write == written) {
+                                break;
+                            }
+                            printf ("Had to loop, to_write=%d, written=%d...\n",
+                                    to_write, written);
                         }
-                        written += j;
-                        printf ("Had to loop...\n");
-                    }
 
-                    if (!done) {
-                        (p->counter)++;
-                    } 
+                        // Just in case
+                        if (written == 0) {
+                            printf ("written\n");
+                            exit (-122);
+                        }
+
+                        if (!done) {
+                            (p->counter)++;
+                        }
+                    } else {
+                        perror ("server read2");
+                        done = 1;
+                        nconnections--;
+                    }
                 }
 
                 if (done) {
-                    printf ("Got an error!\n");
                     close (events[i].data.sockid);
+                    if (nconnections <= 0) {
+                        printf ("No more connections left! Exiting...\n");
+                        exit (-122);
+                    }
                 }
             }
         }
     }
-
-    p->tput_done = 1;
 }
 
 
-// TODO stopped here
 void
 Setup (ThreadArgs *p)
 {
-    // Initialize connections: create socket, bind, listen (in establish)
-    // Also creates mtcp_epoll instance
     int sockfd;
     struct sockaddr_in *lsin1, *lsin2;
     char *host;
 
     struct addrinfo hints;
+    struct addrinfo *result, *rp;
+    int s;
     char portno[7]; 
 
     struct protoent *proto;
@@ -318,28 +307,11 @@ Setup (ThreadArgs *p)
 
     lsin1 = &(p->prot.sin1);
     lsin2 = &(p->prot.sin2);
-    sprintf (portno, "%d", p->port);
 
     memset ((char *) lsin1, 0, sizeof (*lsin1));
     memset ((char *) lsin2, 0, sizeof (*lsin2));
 
-    if (!mctx) {
-        mtcp_core_affinitize (0);
-        mctx = mtcp_create_context (0);
-        p->ep = mtcp_epoll_create (mctx, MAXEVENTS);
-    }
-
-    if (!mctx) {
-        printf ("tester: can't create mTCP socket!");
-        exit (-4);
-    }
-
-    if ((sockfd = mtcp_socket (mctx, socket_family, MTCP_SOCK_STREAM, 0)) < 0) {
-        printf ("tester: can't open stream socket!\n");
-        exit (-4);
-    }
-
-    mtcp_setsock_nonblock (mctx, sockfd);
+    sprintf (portno, "%d", p->port);
 
     if (!(proto = getprotobyname ("tcp"))) {
         printf ("tester: protocol 'tcp' unknown!\n");
@@ -347,17 +319,43 @@ Setup (ThreadArgs *p)
     }
 
     if (p->tr) {
-        if (atoi (host) > 0) {
-            lsin1->sin_family = AF_INET;
-            lsin1->sin_addr.s_addr = inet_addr (host);
-        } else {
-            if ((addr = gethostbyname (host)) == NULL) {
-                printf ("tester: invalid hostname '%s'\n", host);
-                exit (-5);
+        if (!p->prot.mctx) {
+            int core = p->threadid % get_nprocs ();
+            mtcp_core_affinitize (core);
+            p->prot.mctx = mtcp_create_context (core);
+        }
+
+        if (!p->prot.mctx) {
+            printf ("tester: can't create mTCP socket!");
+            exit (-4);
+        }
+
+        mctx_t mctx = p->prot.mctx;
+        s = getaddrinfo (host, portno, &hints, &result);
+        if (s != 0) {
+            printf ("%s\n", gai_strerror (s));
+            exit (-10);
+        }
+
+        for (rp = result; rp != NULL; rp = rp->ai_next) {
+            sockfd = mtcp_socket (mctx, rp->ai_family, rp->ai_socktype, 
+                    rp->ai_protocol);
+            if (sockfd == -1) {
+                continue;
             }
 
-            lsin1->sin_family = addr->h_addrtype;
-            memcpy (addr->h_addr, (char *) &(lsin1->sin_addr.s_addr), addr->h_length);
+            if (mtcp_connect (mctx, sockfd, rp->ai_addr, rp->ai_addrlen) != -1) {
+                break;
+            }
+
+            close (sockfd);
+        }
+
+        if (rp == NULL) {
+            printf ("Invalid address %s and/or portno %s! Exiting...\n",
+                    host, portno);
+            mtcp_destroy_context (mctx);
+            exit (-10);
         }
 
         struct timeval tv;
@@ -369,15 +367,37 @@ Setup (ThreadArgs *p)
             exit (-7);
         }
 
+        freeaddrinfo (result);
         lsin1->sin_port = htons (p->port);
         p->commfd = sockfd;
 
     } else {
-        // TODO REUSEADDR/REUSEPORT stuff needs to get done here? 
-        memset ((char *) lsin1, 0, sizeof (*lsin1));
         lsin1->sin_family       = AF_INET;
         lsin1->sin_addr.s_addr  = htonl (INADDR_ANY);
         lsin1->sin_port         = htons (p->port);
+
+        if (!p->prot.mctx) {
+            int core = p->threadid % get_nprocs ();
+            mtcp_core_affinitize (core);
+            p->prot.mctx = mtcp_create_context (core);
+        }
+
+        if (!p->prot.mctx) {
+            printf ("tester: can't create mTCP context!");
+            exit (-4);
+        }
+
+        mctx_t mctx = p->prot.mctx;
+
+        p->ep = mtcp_epoll_create (mctx, MAXEVENTS);
+
+        if ((sockfd = mtcp_socket (mctx, socket_family, MTCP_SOCK_STREAM, 0)) < 0) {
+            printf ("tester: can't open stream socket!\n");
+            exit (-4);
+        }
+
+        // Must be done manually
+        mtcp_setsock_nonblock (mctx, sockfd);
 
         if (mtcp_bind (mctx, sockfd, (struct sockaddr *) lsin1, sizeof (*lsin1)) < 0) {
             printf ("tester: server: bind on local address failed! errno=%d\n", errno);
@@ -400,15 +420,15 @@ establish (ThreadArgs *p)
     int nevents, i;
     struct mtcp_epoll_event events[MAXEVENTS];
     struct mtcp_epoll_event event;
-    double t0, duration;
     int connections = 0;
+    mctx_t mctx = p->prot.mctx;
 
     clen = (socklen_t) sizeof (p->prot.sin2);
     
     event.events = MTCP_EPOLLIN;
     event.data.sockid = p->servicefd;
 
-    if (mtcp_epoll_ctl (mctx, ep, MTCP_EPOLL_CTL_ADD, p->servicefd, &event) == -1) {
+    if (mtcp_epoll_ctl (mctx, p->ep, MTCP_EPOLL_CTL_ADD, p->servicefd, &event) == -1) {
         perror ("epoll_ctl");
         exit (1);
     }
@@ -417,12 +437,8 @@ establish (ThreadArgs *p)
 
     id_print (p, "Starting loop to wait for connections...\n");
 
-    t0 = When ();
-
     while (p->program_state == startup) {
-        duration = STARTUP - (When() - t0);
-
-        nevents = mtcp_epoll_wait (mctx, ep, events, MAXEVENTS, duration); 
+        nevents = mtcp_epoll_wait (mctx, p->ep, events, MAXEVENTS, 0); 
         if (nevents < 0) {
             if (errno != EINTR) {
                 perror ("epoll_wait");
@@ -439,7 +455,7 @@ establish (ThreadArgs *p)
                             (struct sockaddr *) &(p->prot.sin2), &clen);
 
                     if (p->commfd == -1) {
-                       if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
+                       if (errno == EAGAIN) {
                            break;
                        } else {
                            perror ("accept");
@@ -466,7 +482,8 @@ establish (ThreadArgs *p)
                     // Add descriptor to epoll instance
                     event.data.sockid = p->commfd;
                     event.events = MTCP_EPOLLIN | MTCP_EPOLLET;  
-                    if (mtcp_epoll_ctl (mctx, ep, MTCP_EPOLL_CTL_ADD, p->commfd, &event) < 0) {
+                    if (mtcp_epoll_ctl (mctx, p->ep, MTCP_EPOLL_CTL_ADD, 
+                                p->commfd, &event) < 0) {
                         perror ("epoll_ctl");
                         exit (1);
                     }
@@ -476,28 +493,30 @@ establish (ThreadArgs *p)
                         printf ("%d connections so far...\n", connections);
                     }
                 }
-            } else {
-                // Clear the pipe; why is this necessary for mTCP and not TCP?
-                if (events[i].events & MTCP_EPOLLIN) {
-                    int nread;
-                    char buf[128];
+            // } else {
+            //     // Clear the pipe; why is this necessary for mTCP and not TCP?
+            //     if (events[i].events & MTCP_EPOLLIN) {
+            //         int nread;
+            //         char buf[128];
 
-                    nread = mtcp_read (mctx, events[i].data.sockid, buf, PSIZE);
-                    nread = mtcp_write (mctx, events[i].data.sockid, buf, PSIZE);
-                    if (nread) {
-                    }
-                }
+            //         nread = mtcp_read (mctx, events[i].data.sockid, buf, PSIZE);
+            //         nread = mtcp_write (mctx, events[i].data.sockid, buf, PSIZE);
+            //         if (nread) {
+            //         }
+            //     }
             } 
         }
     }
 
-    printf ("Setup complete... getting ready to start experiment\n");
+    p->ncli = connections;
+    id_print (p, "Got %d connections\n", connections);
 }
 
 
 void
 CleanUp (ThreadArgs *p)
 {
+   mctx_t mctx = p->prot.mctx;
    if (p->tr) {
       mtcp_close (mctx, p->commfd);
 

@@ -95,7 +95,7 @@ main (int argc, char **argv)
         // Clients (experiment launcher is responsible for waiting long enough
         // for the server threads to start before trying to connect
         // During STARTUP, client threads will be connecting to the server.
-        sleep (STARTUP);
+        sleep (STARTUP + 2);
 
         // Throughput recorder thread
         pthread_create (&recorder_tid, NULL, ThroughputRecorder, (void *)&args);

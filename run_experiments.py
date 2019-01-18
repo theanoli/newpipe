@@ -84,11 +84,12 @@ class Experiment(object):
         f = open("../machine_info.txt", "r")
 
         for line in f.readlines():
-            fields = line.split(',')
+            fields = line.strip().split(',')
             machinename = fields[0]
             machineid = fields[1]
             iface = fields[2]
             mac = fields[3]
+            ip = fields[4]
 
             if "server" in machinename:
                 servers.append(machinename)
@@ -99,6 +100,7 @@ class Experiment(object):
                     'machineid': machineid,
                     'iface': iface,
                     'mac': mac,
+                    'ip': ip,
             }
 
         f.close()
@@ -136,7 +138,7 @@ class Experiment(object):
         for client in self.clients:
             cmd = (self.basecmd + 
                     " -c %d" % self.nserver_threads + 
-                    " -H %s" % self.server_addr +
+                    " -H %s" % self.machine_dict[self.server_addr]['ip'] +
                     " -d %s" % self.outdir + 
                     " -o %s" % self.outfile +
                     " -u %d" % self.expduration + 

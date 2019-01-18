@@ -119,20 +119,25 @@ TimestampTxRx (ThreadArgs *p)
         snprintf (pbuf, PSIZE, "%lld,%.9ld",
                 (long long) sendtime.tv_sec, sendtime.tv_nsec);
 
-        n = mtcp_write (mctx, p->commfd, pbuf, PSIZE - 1);
-        if (n < 0) {
-            perror ("client write");
-            exit (1);
+        while ((n = mtcp_write (mctx, p->commfd, pbuf, PSIZE - 1)) < 0) {
+            if (errno != EWOULDBLOCK) {
+                if (n < 0) {
+                    perror ("client write");
+                    exit (1);
+                }
+            }
         }
 
         debug_print (p, DEBUG, "pbuf: %s, %d bytes written\n", pbuf, n);
-
         memset (pbuf, 0, PSIZE);
         
-        n = mtcp_read (mctx, p->commfd, pbuf, PSIZE);
-        if (n < 0) {
-            perror ("client read");
-            exit (1);
+        while ((n = mtcp_read (mctx, p->commfd, pbuf, PSIZE)) < 0) {
+            if (errno != EWOULDBLOCK) {
+                if (n < 0) {
+                    perror ("client read");
+                    exit (1);
+                }
+            }
         }
 
         recvtime = PreciseWhen ();        
@@ -195,10 +200,10 @@ Echo (ThreadArgs *p)
 
         for (i = 0; i < n; i++) {
             // Check for errors
-            if ((events[i].events & EPOLLERR) ||
-                    (events[i].events & EPOLLHUP) ||
-                    (events[i].events & !EPOLLIN)) {
-                printf ("epoll error!\n");
+            if ((events[i].events & MTCP_EPOLLERR) ||
+                    (events[i].events & MTCP_EPOLLHUP) ||
+                    (events[i].events & !MTCP_EPOLLIN)) {
+                id_print (p, "epoll error!\n");
                 close (events[i].data.sockid);
             } else if (events[i].data.sockid == p->servicefd) {
                 // Someone is trying to connect; ignore. All clients should have
@@ -321,6 +326,7 @@ Setup (ThreadArgs *p)
     if (p->tr) {
         if (!p->prot.mctx) {
             int core = p->threadid % get_nprocs ();
+            printf ("core %d\n", core);
             mtcp_core_affinitize (core);
             p->prot.mctx = mtcp_create_context (core);
         }
@@ -333,7 +339,7 @@ Setup (ThreadArgs *p)
         mctx_t mctx = p->prot.mctx;
         s = getaddrinfo (host, portno, &hints, &result);
         if (s != 0) {
-            printf ("%s\n", gai_strerror (s));
+            printf ("getaddrinfo: %s\n", gai_strerror (s));
             exit (-10);
         }
 
@@ -358,6 +364,9 @@ Setup (ThreadArgs *p)
             exit (-10);
         }
 
+        // I think this is obligatory...
+        mtcp_setsock_nonblock (mctx, sockfd);
+
         struct timeval tv;
         tv.tv_sec = READTO;
         tv.tv_usec = 0;
@@ -378,6 +387,7 @@ Setup (ThreadArgs *p)
 
         if (!p->prot.mctx) {
             int core = p->threadid % get_nprocs ();
+            printf ("core %d\n", core);
             mtcp_core_affinitize (core);
             p->prot.mctx = mtcp_create_context (core);
         }
@@ -517,13 +527,12 @@ void
 CleanUp (ThreadArgs *p)
 {
    mctx_t mctx = p->prot.mctx;
-   if (p->tr) {
-      mtcp_close (mctx, p->commfd);
+   
+   mtcp_close (mctx, p->commfd);
+   mtcp_destroy_context (mctx);
 
-   } else {
-      mtcp_close (mctx, p->commfd);
+   if (!p->tr) {
       mtcp_close (mctx, p->servicefd);
-
    }
 }
 

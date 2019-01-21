@@ -10,7 +10,7 @@ cp experiment_batch_script.sh results
 
 {
 ntrials=1
-nclient_threads=1
+nclient_threads=4
 
 title="with increasing client thread count,<br>\
     $nclient_threads client threads/machine, $ntrials trial(s)"

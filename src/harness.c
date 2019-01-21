@@ -151,8 +151,6 @@ ThreadEntry (void *vargp)
     if (p->tr) {
         Setup (p);
         TimestampTxRx (p);
-        CleanUp (p);
-
     } else {
         if (p->threadid == 0) {
             Setup (p);
@@ -163,10 +161,9 @@ ThreadEntry (void *vargp)
         id_print (p, "Received %" PRIu64 " packets this thread.\n", 
                     p->counter);
         fflush (stdout);
-
-        CleanUp (p);
     }
 
+    CleanUp (p);
     return 0;
 }
 

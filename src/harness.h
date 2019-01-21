@@ -21,13 +21,15 @@
 
 #define PSIZE   32
 #define DEFPORT 8000
-#define MAXEVENTS 4
+#define MAXEVENTS 16
 #define FNAME_BUF 256
 #define LBUFSIZE 512
 
+#define DEBUG 0
+#define CLIENT_DEBUG 1
+
 // For throughput experiments: time to wait before
 // starting measurements
-#define DEBUG 0
 #define STARTUP 4
 #define WARMUP 10
 #define COOLDOWN 10

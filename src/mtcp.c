@@ -94,7 +94,9 @@ TimestampTxRx (ThreadArgs *p)
     // Send and then receive an echoed timestamp.
     // Return a pointer to the stored timestamp. 
     char pbuf[PSIZE];  // for packets
-    int n, m;
+    int j, n, m, read;
+    struct mtcp_epoll_event events[1];
+    struct mtcp_epoll_event event;
     struct timespec sendtime, recvtime;
     FILE *out;
     mctx_t mctx = p->prot.mctx;
@@ -109,6 +111,14 @@ TimestampTxRx (ThreadArgs *p)
         out = stdout;
     }
 
+    event.data.sockid = p->commfd;
+    event.events = MTCP_EPOLLIN | MTCP_EPOLLET;
+    if (mtcp_epoll_ctl (mctx, p->ep, MTCP_EPOLL_CTL_ADD,
+                p->commfd, &event) < 0) {
+        perror ("epoll_ctl");
+        exit (1);
+    }
+
     while (p->program_state != experiment) {
     }
     
@@ -116,36 +126,68 @@ TimestampTxRx (ThreadArgs *p)
     // startup phase
     while (p->program_state == experiment) {
         sendtime = PreciseWhen ();
+
         snprintf (pbuf, PSIZE, "%lld,%.9ld",
                 (long long) sendtime.tv_sec, sendtime.tv_nsec);
 
-        while ((n = mtcp_write (mctx, p->commfd, pbuf, PSIZE - 1)) < 0) {
-            if (errno != EWOULDBLOCK) {
-                if (n < 0) {
+        // This might be overkill---will write ever block?
+        while ((j = mtcp_write (mctx, p->commfd, pbuf, PSIZE - 1)) < 0) {
+            if (j < 0) {
+                if (errno != EWOULDBLOCK) {
                     perror ("client write");
                     exit (1);
                 }
             }
         }
 
-        debug_print (p, DEBUG, "pbuf: %s, %d bytes written\n", pbuf, n);
+        debug_print (p, DEBUG, "pbuf: %s, %d bytes written\n", pbuf, j);
         memset (pbuf, 0, PSIZE);
         
-        while ((n = mtcp_read (mctx, p->commfd, pbuf, PSIZE)) < 0) {
-            if (errno != EWOULDBLOCK) {
-                if (n < 0) {
-                    perror ("client read");
-                    exit (1);
+        // And now wait for data to arrive
+        n = mtcp_epoll_wait (mctx, p->ep, events, 1, 1);
+        if (n < 0) {
+            perror ("epoll_wait");
+            CleanUp (p);
+            exit (-122);
+        }
+
+        if ((events[0].events & MTCP_EPOLLERR) ||
+                (events[0].events & MTCP_EPOLLHUP) ||
+                (events[0].events & !MTCP_EPOLLIN)) {
+            id_print (p, "epoll error!\n");
+            close (events[0].data.sockid);
+        } else {
+            // Read data
+            read = 0;
+            while (1) {
+                j = mtcp_read (mctx, events[0].data.sockid, pbuf + read, PSIZE);
+                if (j <= 0) {
+                    break;
                 }
+                read += j;
+            }
+            
+            if ((j == 0) || 
+                    ((j < 0) && (errno != EAGAIN)) || 
+                    (read > PSIZE))  {
+                // Other side is disconnected, an error occurred, 
+                // or we've read too much
+                perror ("client read");
+                CleanUp (p);
+                exit (-176);
             }
         }
 
         recvtime = PreciseWhen ();        
         (p->counter)++;
 
-        if ((!p->no_record) && (p->counter % 1000 == 0)) {
+        debug_print (p, DEBUG, "Got timestamp: %s, %d bytes read\n", pbuf, n);
+        fflush (stdout);
+
+        if ((!p->no_record) && (p->counter % 100 == 0)) {
             if (p->lbuf_offset > (LBUFSIZE - 41)) {
-                // Flush buffer to fie
+                debug_print (p, DEBUG, "%s", p->lbuf, p->lbuf_offset);
+                // Flush buffer to file
                 // 41 is the longest possible write
                 fwrite (p->lbuf, 1, p->lbuf_offset, out);
                 memset (p->lbuf, 0, LBUFSIZE);
@@ -159,7 +201,6 @@ TimestampTxRx (ThreadArgs *p)
             }
         }
 
-        debug_print (p, DEBUG, "Got timestamp: %s, %d bytes read\n", pbuf, n);
     }
 }
 
@@ -190,10 +231,8 @@ Echo (ThreadArgs *p)
         n = mtcp_epoll_wait (mctx, p->ep, events, MAXEVENTS, 1);
 
         if (n < 0) {
-            if (n == EINTR) {
-                perror ("epoll_wait: echo intr:");
-            }
-            // exit (1);
+            perror ("epoll_wait");
+            exit (1);
         }
         
         debug_print (p, DEBUG, "Got %d events\n", n);
@@ -326,7 +365,6 @@ Setup (ThreadArgs *p)
     if (p->tr) {
         if (!p->prot.mctx) {
             int core = p->threadid % get_nprocs ();
-            printf ("core %d\n", core);
             mtcp_core_affinitize (core);
             p->prot.mctx = mtcp_create_context (core);
         }
@@ -337,6 +375,9 @@ Setup (ThreadArgs *p)
         }
 
         mctx_t mctx = p->prot.mctx;
+
+        p->ep = mtcp_epoll_create (mctx, 1);
+
         s = getaddrinfo (host, portno, &hints, &result);
         if (s != 0) {
             printf ("getaddrinfo: %s\n", gai_strerror (s));
@@ -379,7 +420,6 @@ Setup (ThreadArgs *p)
         freeaddrinfo (result);
         lsin1->sin_port = htons (p->port);
         p->commfd = sockfd;
-
     } else {
         lsin1->sin_family       = AF_INET;
         lsin1->sin_addr.s_addr  = htonl (INADDR_ANY);

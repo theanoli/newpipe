@@ -38,6 +38,7 @@ main (int argc, char **argv)
     args.port = DEFPORT;
 
     args.program_state = startup;
+    args.done = 0;
 
     /* Parse the arguments. See Usage for description */
     while ((c = getopt (argc, argv, "no:d:H:T:c:P:u:li")) != -1)
@@ -131,12 +132,13 @@ main (int argc, char **argv)
 
         printf ("All done!\n");
         UpdateProgramState (end);
-        pthread_join (recorder_tid, NULL);
     }
 
     for (i = 0; i < args.nthreads; i++) {
         pthread_join (args.tids[i], NULL);
     }
+
+    pthread_join (recorder_tid, NULL);
 
     return 0;
 }
@@ -147,16 +149,17 @@ void *
 ThreadEntry (void *vargp)
 {
     ThreadArgs *p = (ThreadArgs *)vargp;
+    int ret = 0;
     
     if (p->tr) {
         Setup (p);
-        TimestampTxRx (p);
+        ret = TimestampTxRx (p);
     } else {
         if (p->threadid == 0) {
             Setup (p);
         }
 
-        Echo (p);
+        ret = Echo (p);
 
         id_print (p, "Received %" PRIu64 " packets this thread.\n", 
                     p->counter);
@@ -164,6 +167,9 @@ ThreadEntry (void *vargp)
     }
 
     CleanUp (p);
+    if (ret < 0) {
+        *p->done = 1;
+    }
     return 0;
 }
 
@@ -223,6 +229,9 @@ UpdateProgramState (ProgramState state)
         CollectStats (&args);
     }
 
+    if (args.done) {
+        state = end;
+    }
     args.program_state = state;
     for (i = 0; i < args.nthreads; i++) {
         args.thread_data[i].program_state = state;

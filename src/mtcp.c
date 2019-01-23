@@ -46,6 +46,7 @@ LaunchThreads (ProgramArgs *pargs)
         targs[i].host = pargs->host;
         targs[i].tr = pargs->tr;
         targs[i].program_state = startup;
+        targs[i].done = &pargs->done;
 
         // For servers, this is how many clients from which to expect connections.
         // For clients, this is how many total server threads there are. 
@@ -88,13 +89,13 @@ LaunchThreads (ProgramArgs *pargs)
 }
 
 
-void 
+int 
 TimestampTxRx (ThreadArgs *p)
 {
     // Send and then receive an echoed timestamp.
     // Return a pointer to the stored timestamp. 
     char pbuf[PSIZE];  // for packets
-    int j, n, m, read;
+    int j, n, m, i, read;
     struct mtcp_epoll_event events[1];
     struct mtcp_epoll_event event;
     struct timespec sendtime, recvtime;
@@ -135,6 +136,7 @@ TimestampTxRx (ThreadArgs *p)
             if (j < 0) {
                 if (errno != EWOULDBLOCK) {
                     perror ("client write");
+                    CleanUp (p);
                     exit (1);
                 }
             }
@@ -143,69 +145,73 @@ TimestampTxRx (ThreadArgs *p)
         debug_print (p, DEBUG, "pbuf: %s, %d bytes written\n", pbuf, j);
         memset (pbuf, 0, PSIZE);
         
-        // And now wait for data to arrive
-        n = mtcp_epoll_wait (mctx, p->ep, events, 1, 1);
+        // And now wait for response to arrive
+        n = mtcp_epoll_wait (mctx, p->ep, events, 1, -1);
         if (n < 0) {
             perror ("epoll_wait");
-            CleanUp (p);
-            exit (-122);
+            return -1;
         }
 
-        if ((events[0].events & MTCP_EPOLLERR) ||
-                (events[0].events & MTCP_EPOLLHUP) ||
-                (events[0].events & !MTCP_EPOLLIN)) {
-            id_print (p, "epoll error!\n");
-            close (events[0].data.sockid);
-        } else {
-            // Read data
-            read = 0;
-            while (1) {
-                j = mtcp_read (mctx, events[0].data.sockid, pbuf + read, PSIZE);
-                if (j <= 0) {
-                    break;
-                }
-                read += j;
-            }
-            
-            if ((j == 0) || 
-                    ((j < 0) && (errno != EAGAIN)) || 
-                    (read > PSIZE))  {
-                // Other side is disconnected, an error occurred, 
-                // or we've read too much
-                perror ("client read");
-                CleanUp (p);
-                exit (-176);
-            }
+        if (n > 1) {
+            debug_print (p, CLIENT_DEBUG, "Got more than 1 event!\n");
         }
-
-        recvtime = PreciseWhen ();        
-        (p->counter)++;
-
-        debug_print (p, DEBUG, "Got timestamp: %s, %d bytes read\n", pbuf, n);
-        fflush (stdout);
-
-        if ((!p->no_record) && (p->counter % 100 == 0)) {
-            if (p->lbuf_offset > (LBUFSIZE - 41)) {
-                debug_print (p, DEBUG, "%s", p->lbuf, p->lbuf_offset);
-                // Flush buffer to file
-                // 41 is the longest possible write
-                fwrite (p->lbuf, 1, p->lbuf_offset, out);
-                memset (p->lbuf, 0, LBUFSIZE);
-                p->lbuf_offset = 0;
+        for (i = 0; i < n; i++) {
+            if ((events[0].events & MTCP_EPOLLERR) ||
+                    (events[0].events & MTCP_EPOLLHUP) ||
+                    (events[0].events & !MTCP_EPOLLIN)) {
+                id_print (p, "epoll error!\n");
+                mtcp_close (mctx, events[0].data.sockid);
+                return -1;
             } else {
-                // More capacity in the buffer
-                m = snprintf (p->lbuf + p->lbuf_offset, PSIZE*2, "%s,%lld,%.9ld\n",
-                        pbuf,
-                        (long long) recvtime.tv_sec, recvtime.tv_nsec);
-                p->lbuf_offset += m;
+                // Read data
+                read = 0;
+                while (1) {
+                    j = mtcp_read (mctx, events[0].data.sockid, pbuf + read, PSIZE);
+                    if (j <= 0) {
+                        break;
+                    }
+                    read += j;
+                }
+                
+                if ((j == 0) || 
+                        ((j < 0) && (errno != EAGAIN)) || 
+                        (read > PSIZE))  {
+                    // Other side is disconnected, an error occurred, 
+                    // or we've read too much
+                    perror ("client read");
+                    return -1;
+                }
+            }
+
+            recvtime = PreciseWhen ();        
+            (p->counter)++;
+
+            debug_print (p, DEBUG, "Got timestamp: %s, %d bytes read\n", pbuf, n);
+            fflush (stdout);
+
+            if ((!p->no_record) && (p->counter % 100 == 0)) {
+                if (p->lbuf_offset > (LBUFSIZE - 41)) {
+                    debug_print (p, DEBUG, "%s", p->lbuf, p->lbuf_offset);
+                    // Flush buffer to file
+                    // 41 is the longest possible write
+                    fwrite (p->lbuf, 1, p->lbuf_offset, out);
+                    memset (p->lbuf, 0, LBUFSIZE);
+                    p->lbuf_offset = 0;
+                } else {
+                    // More capacity in the buffer
+                    m = snprintf (p->lbuf + p->lbuf_offset, PSIZE*2, "%s,%lld,%.9ld\n",
+                            pbuf,
+                            (long long) recvtime.tv_sec, recvtime.tv_nsec);
+                    p->lbuf_offset += m;
+                }
             }
         }
-
     }
+    return 0;
 }
 
 
-void
+int
 Echo (ThreadArgs *p)
 {
     // Server-side only!
@@ -232,7 +238,7 @@ Echo (ThreadArgs *p)
 
         if (n < 0) {
             perror ("epoll_wait");
-            exit (1);
+            return -1;
         }
         
         debug_print (p, DEBUG, "Got %d events\n", n);
@@ -243,7 +249,7 @@ Echo (ThreadArgs *p)
                     (events[i].events & MTCP_EPOLLHUP) ||
                     (events[i].events & !MTCP_EPOLLIN)) {
                 id_print (p, "epoll error!\n");
-                close (events[i].data.sockid);
+                mtcp_close (mctx, events[i].data.sockid);
             } else if (events[i].data.sockid == p->servicefd) {
                 // Someone is trying to connect; ignore. All clients should have
                 // connected already.
@@ -266,7 +272,7 @@ Echo (ThreadArgs *p)
                 // Just in case
                 if (to_write == 0) {
                     printf ("towrite\n");
-                    exit (-122);
+                    return -1;
                 }
 
                 if (j == 0) {
@@ -301,7 +307,7 @@ Echo (ThreadArgs *p)
                         // Just in case
                         if (written == 0) {
                             printf ("written\n");
-                            exit (-122);
+                            return -1;
                         }
 
                         if (!done) {
@@ -315,15 +321,16 @@ Echo (ThreadArgs *p)
                 }
 
                 if (done) {
-                    close (events[i].data.sockid);
+                    mtcp_close (mctx, events[i].data.sockid);
                     if (nconnections <= 0) {
                         printf ("No more connections left! Exiting...\n");
-                        exit (-122);
+                        return -1;
                     }
                 }
             }
         }
     }
+    return 0;
 }
 
 
@@ -395,7 +402,7 @@ Setup (ThreadArgs *p)
                 break;
             }
 
-            close (sockfd);
+            mtcp_close (mctx, sockfd);
         }
 
         if (rp == NULL) {
@@ -543,17 +550,6 @@ establish (ThreadArgs *p)
                         printf ("%d connections so far...\n", connections);
                     }
                 }
-            // } else {
-            //     // Clear the pipe; why is this necessary for mTCP and not TCP?
-            //     if (events[i].events & MTCP_EPOLLIN) {
-            //         int nread;
-            //         char buf[128];
-
-            //         nread = mtcp_read (mctx, events[i].data.sockid, buf, PSIZE);
-            //         nread = mtcp_write (mctx, events[i].data.sockid, buf, PSIZE);
-            //         if (nread) {
-            //         }
-            //     }
             } 
         }
     }
@@ -566,13 +562,17 @@ establish (ThreadArgs *p)
 void
 CleanUp (ThreadArgs *p)
 {
-   mctx_t mctx = p->prot.mctx;
-   
-   mtcp_close (mctx, p->commfd);
-   mtcp_destroy_context (mctx);
+    id_print (p, "Cleaning up!\n"); 
+    mctx_t mctx = p->prot.mctx;
 
-   if (!p->tr) {
-      mtcp_close (mctx, p->servicefd);
-   }
+    if (p->tr) {
+        mtcp_close (mctx, p->commfd);
+    } else {
+        mtcp_close (mctx, p->servicefd);
+    }
+
+    mtcp_destroy_context (mctx);
+    id_print (p, "Finished cleaning up\n");
 }
+
 

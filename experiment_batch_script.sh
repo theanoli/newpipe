@@ -1,6 +1,11 @@
 sudo pip3 install colorlover
 
-make mtcp 
+make mtcp
+ret=$?
+if [[ $ret != 0 ]]; then
+    echo "Compile failed!"
+    exit -1
+fi
 
 echo "[`date +%s`] commit `git rev-parse HEAD`" >> results/README
 
@@ -30,7 +35,7 @@ while [ $nserver_threads -le $nserver_threads_max ]; do
                 $nserver_threads server threads, \
                 $nclient_threads client threads
             python run_experiments.py theano "sudo ./NPmtcp" \
-                --expduration 30 \
+                --expduration 1 \
                 --nclient_machines $nclient_machines \
                 --nclient_threads $nclient_threads \
                 --nserver_threads $nserver_threads
@@ -46,6 +51,8 @@ while [ $nserver_threads -le $nserver_threads_max ]; do
 done
 
 echo Experiments complete! Processing...
+
+rm -rf log_*
 
 bash process_data.sh "$title"
 echo All done!

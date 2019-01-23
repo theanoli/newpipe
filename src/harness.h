@@ -31,8 +31,8 @@
 // For throughput experiments: time to wait before
 // starting measurements
 #define STARTUP 4
-#define WARMUP 10
-#define COOLDOWN 10
+#define WARMUP 5
+#define COOLDOWN 4
 #define READTO 0
 
 // TCP-specific
@@ -119,6 +119,7 @@ struct threadargs
 
     // timer data 
     volatile ProgramState program_state;
+    uint8_t *done;
 };
 
 typedef struct programargs ProgramArgs;
@@ -144,6 +145,7 @@ struct programargs
     int     ncli;           /* For throughput: number of clients in exp     */
     
     uint8_t pin_threads;
+    uint8_t done;
 };
 
 typedef struct data Data;
@@ -172,8 +174,8 @@ void SendData (ThreadArgs *p);
 void LaunchThreads (ProgramArgs *p);
 void *ThreadEntry (void *vargp);
 void *ThroughputRecorder (void *vargp);
-void TimestampTxRx (ThreadArgs *p);
-void Echo (ThreadArgs *p);
+int TimestampTxRx (ThreadArgs *p);
+int Echo (ThreadArgs *p);
 void CleanUp (ThreadArgs *p);
 void PrintUsage();
 void CollectStats (ProgramArgs *p);

@@ -31,8 +31,8 @@
 // For throughput experiments: time to wait before
 // starting measurements
 #define STARTUP 4
-#define WARMUP 5
-#define COOLDOWN 4
+#define WARMUP 10
+#define COOLDOWN 10
 #define READTO 0
 
 // TCP-specific

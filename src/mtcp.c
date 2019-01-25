@@ -30,9 +30,9 @@ Init (ProgramArgs *pargs, int *pargc, char ***pargv)
 void
 LaunchThreads (ProgramArgs *pargs)
 {
-    int i, ret;
-    int nprocs_onln;
-    cpu_set_t cpuset;
+    int i;
+    // int nprocs_onln;
+    // cpu_set_t cpuset;
 
     ThreadArgs *targs = pargs->thread_data;
 
@@ -42,7 +42,6 @@ LaunchThreads (ProgramArgs *pargs)
         snprintf (targs[i].threadname, 128, "[%s.%d]", pargs->machineid, i);
 
         // All clients will connect to the same server port
-        targs[i].port = pargs->port;
         targs[i].host = pargs->host;
         targs[i].tr = pargs->tr;
         targs[i].program_state = startup;
@@ -54,6 +53,14 @@ LaunchThreads (ProgramArgs *pargs)
         targs[i].ep = -1;
         targs[i].no_record = pargs->no_record;
         targs[i].counter = 0;
+
+        // Each server thread gets a listening port, and each client will be
+        // assigned a server port 
+        if (!pargs->tr) {
+            targs[i].port = (pargs->port + i) % pargs->nthreads;
+        } else {
+            targs[i].port = (pargs->port + i) % pargs->ncli;
+        }
 
         if (pargs->no_record) {
             printf ("Not recording measurements to file.\n");
@@ -77,14 +84,14 @@ LaunchThreads (ProgramArgs *pargs)
         pthread_create (&pargs->tids[i], NULL, ThreadEntry, (void *)&targs[i]);
         
         // Always pin cores
-        nprocs_onln = get_nprocs ();
-        CPU_ZERO (&cpuset);
-        CPU_SET (i % nprocs_onln, &cpuset);
-        ret = pthread_setaffinity_np (pargs->tids[i], sizeof (cpu_set_t), &cpuset);
-        if (ret != 0) {
-            printf ("[%s] Couldn't pin thread %d to core!\n", pargs->machineid, i);
-            exit (-14);
-        }
+        // nprocs_onln = get_nprocs ();
+        // CPU_ZERO (&cpuset);
+        // CPU_SET (i % nprocs_onln, &cpuset);
+        // ret = pthread_setaffinity_np (pargs->tids[i], sizeof (cpu_set_t), &cpuset);
+        // if (ret != 0) {
+        //     printf ("[%s] Couldn't pin thread %d to core!\n", pargs->machineid, i);
+        //     exit (-14);
+        // }
     }
 }
 
@@ -146,7 +153,7 @@ TimestampTxRx (ThreadArgs *p)
         memset (pbuf, 0, PSIZE);
         
         // And now wait for response to arrive
-        n = mtcp_epoll_wait (mctx, p->ep, events, 1, -1);
+        n = mtcp_epoll_wait (mctx, p->ep, events, 1, 1);
         if (n < 0) {
             perror ("epoll_wait");
             return -1;
@@ -160,7 +167,6 @@ TimestampTxRx (ThreadArgs *p)
                     (events[0].events & MTCP_EPOLLHUP) ||
                     (events[0].events & !MTCP_EPOLLIN)) {
                 id_print (p, "epoll error!\n");
-                mtcp_close (mctx, events[0].data.sockid);
                 return -1;
             } else {
                 // Read data
@@ -217,7 +223,7 @@ Echo (ThreadArgs *p)
     // Server-side only!
     // Loop through for expduration seconds and count each packet you send out
     // Start counting packets after a few seconds to stabilize connection(s)
-    int j, n, i, done;
+    int j, n, i;
     int nconnections = p->ncli;
     struct mtcp_epoll_event events[MAXEVENTS];
     int to_write;
@@ -249,14 +255,13 @@ Echo (ThreadArgs *p)
                     (events[i].events & MTCP_EPOLLHUP) ||
                     (events[i].events & !MTCP_EPOLLIN)) {
                 id_print (p, "epoll error!\n");
-                mtcp_close (mctx, events[i].data.sockid);
+                return -1;
             } else if (events[i].data.sockid == p->servicefd) {
                 // Someone is trying to connect; ignore. All clients should have
                 // connected already.
                 continue;
             } else {
                 // There's data to be read
-                done = 0;
                 to_write = 0;
                 memset (rcv_buf, 0, PSIZE);
 
@@ -278,8 +283,7 @@ Echo (ThreadArgs *p)
                 if (j == 0) {
                     // Other side is disconnected
                     perror ("server read");
-                    done = 1;
-                    nconnections--;
+                    return -1;
                 } else if (j < 0) {
                     if (errno == EAGAIN) {
                         // We read everything; echo back to the client
@@ -291,8 +295,7 @@ Echo (ThreadArgs *p)
                             if (j < 0) {
                                 if (errno != EAGAIN) {
                                     perror ("server write");
-                                    done = 1;
-                                    nconnections--;
+                                    return -1;
                                 }
                                 break;
                             }
@@ -310,24 +313,17 @@ Echo (ThreadArgs *p)
                             return -1;
                         }
 
-                        if (!done) {
-                            (p->counter)++;
-                        }
+                        (p->counter)++;
                     } else {
                         perror ("server read2");
-                        done = 1;
-                        nconnections--;
-                    }
-                }
-
-                if (done) {
-                    mtcp_close (mctx, events[i].data.sockid);
-                    if (nconnections <= 0) {
-                        printf ("No more connections left! Exiting...\n");
                         return -1;
                     }
                 }
             }
+        }
+        if (nconnections <= 0) {
+            printf ("No more connections left! Exiting...\n");
+            return -1;
         }
     }
     return 0;
@@ -369,9 +365,10 @@ Setup (ThreadArgs *p)
         exit (555);
     }
 
+    int core = p->threadid % get_nprocs ();
+
     if (p->tr) {
         if (!p->prot.mctx) {
-            int core = p->threadid % get_nprocs ();
             mtcp_core_affinitize (core);
             p->prot.mctx = mtcp_create_context (core);
         }
@@ -428,12 +425,13 @@ Setup (ThreadArgs *p)
         lsin1->sin_port = htons (p->port);
         p->commfd = sockfd;
     } else {
+        // Every server should open a listening socket; any connected client will
+        // only communicate with that server
         lsin1->sin_family       = AF_INET;
         lsin1->sin_addr.s_addr  = htonl (INADDR_ANY);
         lsin1->sin_port         = htons (p->port);
 
         if (!p->prot.mctx) {
-            int core = p->threadid % get_nprocs ();
             printf ("core %d\n", core);
             mtcp_core_affinitize (core);
             p->prot.mctx = mtcp_create_context (core);
@@ -571,8 +569,8 @@ CleanUp (ThreadArgs *p)
         mtcp_close (mctx, p->servicefd);
     }
 
-    mtcp_destroy_context (mctx);
+    id_print (p, "Closed sockets\n");
+
+    // mtcp_destroy_context (mctx);
     id_print (p, "Finished cleaning up\n");
 }
-
-

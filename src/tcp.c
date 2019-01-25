@@ -164,10 +164,7 @@ Echo (ThreadArgs *p)
     int written;
     char rcv_buf[PSIZE];
 
-    // Add a few-second delay to let the clients stabilize
     while (p->program_state == startup) {
-        // Should never be in this status in this function, 
-        // but just in case...
         // sppppiiiinnnnnn
     }
 
@@ -276,6 +273,11 @@ Echo (ThreadArgs *p)
 void
 Setup (ThreadArgs *p)
 {
+    // Only want to do this for the 0th thread on server
+    if (!p->tr && (p->threadid != 0)) {
+        return;
+    }
+
     int sockfd; 
     struct sockaddr_in *lsin1, *lsin2;
     char *host;

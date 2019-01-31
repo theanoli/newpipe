@@ -38,6 +38,7 @@ LaunchThreads (ProgramArgs *pargs)
         // All clients will connect to the same server port
         targs[i].port = pargs->port;
         targs[i].host = pargs->host;
+        targs[i].nports = pargs->nports;
         targs[i].tr = pargs->tr;
         targs[i].program_state = startup;
 
@@ -83,13 +84,38 @@ LaunchThreads (ProgramArgs *pargs)
 }
 
 
+void
+write_latency_data (ThreadArgs *p, FILE *out, char *pbuf, struct timespec *recvtime)
+{
+    int m; 
+
+    if (p->lbuf_offset > (LBUFSIZE - 41)) {
+        // Flush the buffer to file
+        // 41 is longest possible write
+        fwrite (p->lbuf, 1, p->lbuf_offset, out);
+        memset (p->lbuf, 0, LBUFSIZE);
+        p->lbuf_offset = 0;
+    } else {
+        // There's more capacity in the buffer
+        m = snprintf (p->lbuf + p->lbuf_offset, PSIZE*2, "%s,%lld,%.9ld\n", 
+                pbuf,
+                (long long) recvtime->tv_sec, recvtime->tv_nsec);
+        p->lbuf_offset += m;
+    }
+}
+
+
 int
 TimestampTxRx (ThreadArgs *p)
 {
     // Send and then receive an echoed timestamp.
     // Return a pointer to the stored timestamp. 
+    int i, j, n;
+    struct epoll_event events[MAXEVENTS_CLI];
+    int nread; 
+    int written;
     char pbuf[PSIZE];  // for packets
-    int n, m;
+
     struct timespec sendtime, recvtime;
     FILE *out;
 
@@ -109,56 +135,95 @@ TimestampTxRx (ThreadArgs *p)
     // Client will be immediately put into experiment mode after 
     // startup phase
     while (p->program_state == experiment) {
-        sendtime = PreciseWhen ();
-        snprintf (pbuf, PSIZE, "%lld,%.9ld",
-                (long long) sendtime.tv_sec, sendtime.tv_nsec);
+        n = epoll_wait (p->ep, events, MAXEVENTS_CLI, 1);
 
-        n = write (p->commfd, pbuf, PSIZE - 1);
         if (n < 0) {
-            perror ("client write");
-            return -1;
+            perror ("epoll_wait");
+            exit (-1);
         }
 
-        debug_print (p, DEBUG, "pbuf: %s, %d bytes written\n", pbuf, n);
+        for (i = 0; i < n; i++) {
+            if ((events[i].events & EPOLLERR) ||
+                    (events[i].events & EPOLLHUP)) {
+                // Error; exit
+                id_print (p, "epoll error!\n");
+                return -1;
+            } else if (events[i].events & EPOLLIN) {
+                // Read data and dump to file if needed
+                nread = 0;
+                memset (pbuf, 0, PSIZE);
+                
+                while (1) {
+                    j = read (events[i].data.fd, pbuf + nread, 
+                            PSIZE - nread);
+                    if (j <= 0) {
+                        break;
+                    }
+                    nread += j;
+                }
 
-        memset (pbuf, 0, PSIZE);
-        
-        n = read (p->commfd, pbuf, PSIZE);
-        if (n < 0) {
-            perror ("client read");
-            return -1;
-        }
+                if (j == 0) {
+                    // Other side is disconnected
+                    perror ("client read");
+                    return -1;
+                } else if (j < 0) {
+                    if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
 
-        recvtime = PreciseWhen ();        
-        (p->counter)++;
+                        recvtime = PreciseWhen ();
+                        (p->counter)++;
 
-        if ((!p->no_record) && (p->counter % 1000 == 0)) {
-            if (p->lbuf_offset > (LBUFSIZE - 41)) {
-                // Flush the buffer to file
-                // 41 is longest possible write
-                fwrite (p->lbuf, 1, p->lbuf_offset, out);
-                memset (p->lbuf, 0, LBUFSIZE);
-                p->lbuf_offset = 0;
-            } else {
-                // There's more capacity in the buffer
-                m = snprintf (p->lbuf + p->lbuf_offset, PSIZE*2, "%s,%lld,%.9ld\n", 
-                        pbuf,
-                        (long long) recvtime.tv_sec, recvtime.tv_nsec);
-                p->lbuf_offset += m;
+                        if ((!p->no_record) && (p->counter % 1000 == 0)) {
+                            write_latency_data (p, out, pbuf, &recvtime);
+                        }
+
+                        debug_print (p, DEBUG, 
+                                "Got timestamp: %s, %d bytes read\n", pbuf, nread);
+                    } else {
+                        perror ("client read2");
+                        return -1;
+                    }
+                }
+            } else if (events[i].events & EPOLLOUT) {
+                // Send a timestamp
+                written = 0;
+                memset (pbuf, 0, PSIZE);
+                sendtime = PreciseWhen ();
+
+                snprintf (pbuf, PSIZE, "%lld,%.9ld",
+                        (long long) sendtime.tv_sec, sendtime.tv_nsec);
+
+                while (1) {
+                    j = write (events[i].data.fd, pbuf + written, 
+                            PSIZE - written - 1);
+                    if (j < 0) {
+                        if ((errno != EAGAIN) && (errno != EWOULDBLOCK)) {
+                            perror ("client write");
+                            return -1;
+                        }
+                        break;
+                    }
+                    written += j;
+                    if (written == PSIZE - 1) {
+                        break;
+                    }
+                }
+                if (written == 0) {
+                    id_print (p, "written\n");
+                    return -1;
+                }
+
+                debug_print (p, DEBUG, "pbuf: %s, %d bytes written\n", pbuf, written);
             }
         }
-
-        debug_print (p, DEBUG, "Got timestamp: %s, %d bytes read\n", pbuf, n);
     }
     return 0;
 }
-
 
 int
 Echo (ThreadArgs *p)
 {
     // Server-side only!
-    int j, n, i;
+    int i, j, n;
     struct epoll_event events[MAXEVENTS];
     int to_write;
     int written;
@@ -180,7 +245,7 @@ Echo (ThreadArgs *p)
             // exit (1);
         }
         
-        debug_print (p, DEBUG, "Got %d events\n", n);
+        debug_print (p, SERV_DEBUG, "Got %d events\n", n);
 
         for (i = 0; i < n; i++) {
             // Check for errors 
@@ -266,86 +331,76 @@ Setup (ThreadArgs *p)
     }
 
     int sockfd; 
-    struct sockaddr_in *lsin1, *lsin2;
-    char *host;
+    struct sockaddr_in *lsin;
     
-    struct addrinfo hints;
-    struct addrinfo *result, *rp;
-    int s;
+    int ret, i, port;
     char portno[7]; 
 
-    struct protoent *proto;
-    int socket_family = AF_INET;
     int flags;
 
-    host = p->host;
+    struct epoll_event event;
 
-    // To resolve a hostname
-    memset (&hints, 0, sizeof (struct addrinfo));
-    hints.ai_family     = socket_family;
-    hints.ai_socktype   = SOCK_STREAM;
-
-    lsin1 = &(p->prot.sin1);  // my info
-    lsin2 = &(p->prot.sin2);  // remote info
-    
-    memset ((char *) lsin1, 0, sizeof (*lsin1));
-    memset ((char *) lsin2, 0, sizeof (*lsin2));
-
+    lsin = &(p->prot.sin1);
+    memset ((char *) lsin, 0, sizeof (*lsin));
     sprintf (portno, "%d", p->port);  // the port client will connect to
     
-    if (!(proto = getprotobyname ("tcp"))) {
-        printf ("tester: protocol 'tcp' unknown!\n");
-        exit (555);
-    }
-
     if (p->tr) {
-        s = getaddrinfo (host, portno, &hints, &result);
-        if (s != 0) {
-            printf ("%s\n", gai_strerror (s)); 
-            exit (-10);
-        }
+        p->ep = epoll_create (1);
 
-        for (rp = result; rp != NULL; rp = rp->ai_next) {
-            sockfd = socket (rp->ai_family, rp->ai_socktype,
-                    rp->ai_protocol);
-            if (sockfd == -1) {
-                continue;
+        // Shut up the compiler
+        lsin->sin_family = AF_INET;
+        lsin->sin_addr.s_addr = inet_addr (p->host);
+        lsin->sin_port = htons (port);
+
+        for (i = 0; i < p->nports; i++) {
+            lsin->sin_family = AF_INET;
+            lsin->sin_addr.s_addr = inet_addr (p->host);
+            lsin->sin_port = htons (p->port);
+
+            sockfd = socket (AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+            if (sockfd < 0) {
+                id_print (p, "Failed to create socket!\n");
+                exit (-10);
             }
 
-            if (connect (sockfd, rp->ai_addr, rp->ai_addrlen) != -1) {
-                break;
+            ret = connect (sockfd, (struct sockaddr *)lsin,
+                    sizeof (struct sockaddr));
+            if (ret < 0) {
+                if (errno != EINPROGRESS) {
+                    perror ("connect");
+                    exit (-12);
+                }
             }
 
-            close (sockfd);
-        }
+            struct timeval tv;
+            tv.tv_sec = READTO;
+            tv.tv_usec = 0;
+            if (setsockopt (sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv) < 0) {
+                printf ("tester: client: SO_RCVTIMEO failed! errno=%d\n", errno);
+                exit (-7);
+            }
+            
+            event.events = EPOLLOUT | EPOLLIN;
+            event.data.fd = sockfd;
+            ret = epoll_ctl (p->ep, EPOLL_CTL_ADD, sockfd, &event);
+            if (ret < 0) {
+                perror ("epoll_ctl in setup");
+                exit (-4);
+            }
 
-        if (rp == NULL) {
-            printf ("Invalid address %s and/or portno %s! Exiting...\n", host, portno);
-            exit (-10);
+            memset ((char *) lsin, 0, sizeof (*lsin));
         }
-
-        struct timeval tv;
-        tv.tv_sec = READTO;
-        tv.tv_usec = 0;
-        if (setsockopt (sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv) < 0) {
-            printf ("tester: client: SO_RCVTIMEO failed! errno=%d\n", errno);
-            exit (-7);
-        }
-        
-        freeaddrinfo (result);
-        lsin1->sin_port = htons (p->port);
-        p->commfd = sockfd;
 
     } else {
-        lsin1->sin_family       = AF_INET;
-        lsin1->sin_addr.s_addr  = htonl (INADDR_ANY);
-        lsin1->sin_port         = htons (p->port);  // the port server will bind to
+        lsin->sin_family       = AF_INET;
+        lsin->sin_addr.s_addr  = htonl (INADDR_ANY);
+        lsin->sin_port         = htons (p->port);  // the port server will bind to
 
-        p->ep = epoll_create (MAXEVENTS);
+        p->ep = epoll_create (1);
 
         flags = SOCK_STREAM | SOCK_NONBLOCK;
 
-        if ((sockfd = socket (socket_family, flags, 0)) < 0) {
+        if ((sockfd = socket (AF_INET, flags, 0)) < 0) {
             printf ("tester: can't open stream socket!\n");
             exit (-4);
         }
@@ -360,7 +415,7 @@ Setup (ThreadArgs *p)
             exit (-7);
         }
 
-        if (bind (sockfd, (struct sockaddr *) lsin1, sizeof (*lsin1)) < 0) {
+        if (bind (sockfd, (struct sockaddr *) lsin, sizeof (*lsin)) < 0) {
             printf ("tester: server: bind on local address failed! errno=%d\n", errno);
             exit (-6);
         }

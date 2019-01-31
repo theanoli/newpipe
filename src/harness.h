@@ -21,12 +21,14 @@
 
 #define PSIZE   32
 #define DEFPORT 8000
-#define MAXEVENTS 4
+#define MAXEVENTS 16
+#define MAXEVENTS_CLI 16
 #define FNAME_BUF 256
 #define LBUFSIZE 512
 
-#define DEBUG 0
+#define DEBUG 1
 #define CLIENT_DEBUG 1
+#define SERV_DEBUG 0
 
 // For throughput experiments: time to wait before
 // starting measurements
@@ -98,7 +100,7 @@ struct threadargs
     int     servicefd;     /* File descriptor of the network socket         */
     int        commfd;        /* Communication file descriptor                 */
     short   port;          /* Port used for connection/listening */
-    short   myport;         /* local port to bind to */
+    short   nports;         /* How many connections to open on client */
     ProtocolStruct prot;   /* Protocol-depended stuff                       */
 
     char    *host;          /* Name of receiving host                       */
@@ -134,6 +136,7 @@ struct programargs
     int     tr;             /* Is this a client? */ 
     int     nthreads;       /* How many threads to launch                   */
     int     no_record;      /* Flag: record results or not                  */
+    short   nports;         /* How many connections to open on client */
 
     char    *outdir;
     char    *outfile;

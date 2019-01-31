@@ -23,6 +23,7 @@ class Experiment(object):
         self.server_addr = args.server_addr
         self.nclient_threads = args.nclient_threads
         self.nclient_machines = args.nclient_machines
+        self.nclient_ports = args.nclient_ports
         self.nserver_threads = args.nserver_threads
         self.start_port = args.start_port
         self.wdir = args.wdir
@@ -117,7 +118,8 @@ class Experiment(object):
                 " -d %s" % self.outdir + 
                 " -o %s" % self.outfile +
                 " -u %d" % self.expduration + 
-                " -T %d" % self.nserver_threads)
+                " -T %d" % self.nserver_threads + 
+                " -p 0")
         if self.collect_stats:
             serv_cmd += " -l"
         if not self.unpin_sthreads:
@@ -142,7 +144,8 @@ class Experiment(object):
                     " -d %s" % self.outdir + 
                     " -o %s" % self.outfile +
                     " -u %d" % self.expduration + 
-                    " -T %d" % (self.nclient_threads) +
+                    " -T %d" % self.nclient_threads +
+                    " -p %d" % self.nclient_ports + 
                     " -P %d" % self.start_port)
             if not self.unpin_cthreads:
                 cmd += " -i"
@@ -207,6 +210,10 @@ if __name__ == "__main__":
     parser.add_argument('--outfile',
             help=('Base name for experiments'),
             default=None)
+    parser.add_argument('--nclient_ports',
+            help=('How many connections to open per client thread'),
+            type=int,
+            default=1)
 
     args = parser.parse_args()
 

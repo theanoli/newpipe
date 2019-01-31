@@ -16,7 +16,8 @@ cp generate_plot.py results
 cp pickle_data.py results
 cp experiment_batch_script.sh results
 
-ntrials=3
+ntrials=1
+nclient_ports=2
 
 nserver_threads_min=2
 nserver_threads_max=16
@@ -24,8 +25,8 @@ nserver_threads_max=16
 nclient_threads_min=16
 nclient_threads_max=16
 
-nclient_machines_min=2
-nclient_machines_max=32
+nclient_machines_min=1
+nclient_machines_max=8
 
 title="with increasing client thread count,<br>\
     $nclient_threads_min client threads per machine, $ntrials trial(s); 16 TX/RX queues"
@@ -48,7 +49,8 @@ while [ $nserver_threads -le $nserver_threads_max ]; do
                     --expduration 30 \
                     --nclient_machines $nclient_machines \
                     --nclient_threads $nclient_threads \
-                    --nserver_threads $nserver_threads
+                    --nserver_threads $nserver_threads \
+                    --nclient_ports $nclient_ports
                 echo
                 ((trial=$trial+1))
 

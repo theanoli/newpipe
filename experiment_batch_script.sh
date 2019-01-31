@@ -1,6 +1,9 @@
 sudo pip3 install colorlover
 
-make mtcp
+{
+cmd="./NPtcp"
+make tcp
+
 ret=$?
 if [[ $ret != 0 ]]; then
     echo "Compile failed!"
@@ -13,26 +16,24 @@ cp generate_plot.py results
 cp pickle_data.py results
 cp experiment_batch_script.sh results
 
-{
 ntrials=3
 
-nserver_threads_min=1
+nserver_threads_min=2
 nserver_threads_max=16
 
-nclient_threads_min=1
-nclient_threads_max=1
+nclient_threads_min=16
+nclient_threads_max=16
 
-nclient_machines_min=1
-nclient_machines_max=1
+nclient_machines_min=2
+nclient_machines_max=32
 
-title="with increasing server thread count,<br>\
-    $nclient_threads_min client threads (1 client machine), $ntrials trial(s)"
+title="with increasing client thread count,<br>\
+    $nclient_threads_min client threads per machine, $ntrials trial(s); 16 TX/RX queues"
 
 nserver_threads=$nserver_threads_min
 while [ $nserver_threads -le $nserver_threads_max ]; do
 
-    nclient_machines=$nserver_threads
-    nclient_machines_max=$nserver_threads
+    nclient_machines=$nclient_machines_min
     while [ $nclient_machines -le $nclient_machines_max ]; do
 
         nclient_threads=$nclient_threads_min
@@ -43,7 +44,7 @@ while [ $nserver_threads -le $nserver_threads_max ]; do
                 echo Trial $trial: Running with $nclient_machines client machines, \
                     $nserver_threads server threads, \
                     $nclient_threads client threads
-                python run_experiments.py theano "sudo ./NPmtcp" \
+                python run_experiments.py theano "$cmd" \
                     --expduration 30 \
                     --nclient_machines $nclient_machines \
                     --nclient_threads $nclient_threads \

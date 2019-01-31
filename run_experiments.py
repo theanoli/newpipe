@@ -63,7 +63,7 @@ class Experiment(object):
         atexit.register(self.kill_zombie_processes)
         
     def printer(self, msg): 
-        print "%s %s" % (self.printlabel, msg)
+        print("%s %s" % (self.printlabel, msg))
     
     def kill_zombie_processes(self):
         # Clean up any potential zombies on the client side(s)
@@ -170,7 +170,7 @@ if __name__ == "__main__":
     parser.add_argument('--nclient_threads',
             type=int,
             help=('Number of client threads to run per client machine. '
-                'Default %d.', default_nclient_threads),
+                'Default %d.' % default_nclient_threads),
             default=default_nclient_threads)
     parser.add_argument('--nclient_machines',
             type=int,
@@ -195,7 +195,7 @@ if __name__ == "__main__":
             action='store_true')
     parser.add_argument('--expduration',
             type=int,
-            help=('Set throughput experiment duration. Default %ds.', 
+            help=('Set throughput experiment duration. Default %ds.' %
                 default_expduration),
             default=default_expduration)
     parser.add_argument('--unpin_sthreads',

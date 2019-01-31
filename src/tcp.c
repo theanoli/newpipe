@@ -83,7 +83,7 @@ LaunchThreads (ProgramArgs *pargs)
 }
 
 
-void 
+int
 TimestampTxRx (ThreadArgs *p)
 {
     // Send and then receive an echoed timestamp.
@@ -97,7 +97,7 @@ TimestampTxRx (ThreadArgs *p)
     if (p->tr && (!p->no_record)) {
         if ((out = fopen (p->latency_outfile, "wb")) == NULL) {
             fprintf (stderr, "Can't open %s for output!\n", p->latency_outfile);
-            exit (1);
+            return -1;
         }
     } else {
         out = stdout;
@@ -116,7 +116,7 @@ TimestampTxRx (ThreadArgs *p)
         n = write (p->commfd, pbuf, PSIZE - 1);
         if (n < 0) {
             perror ("client write");
-            exit (1);
+            return -1;
         }
 
         debug_print (p, DEBUG, "pbuf: %s, %d bytes written\n", pbuf, n);
@@ -126,7 +126,7 @@ TimestampTxRx (ThreadArgs *p)
         n = read (p->commfd, pbuf, PSIZE);
         if (n < 0) {
             perror ("client read");
-            exit (1);
+            return -1;
         }
 
         recvtime = PreciseWhen ();        
@@ -150,15 +150,15 @@ TimestampTxRx (ThreadArgs *p)
 
         debug_print (p, DEBUG, "Got timestamp: %s, %d bytes read\n", pbuf, n);
     }
+    return 0;
 }
 
 
-void
+int
 Echo (ThreadArgs *p)
 {
     // Server-side only!
-    int j, n, i, done;
-    int nconnections = p->ncli; 
+    int j, n, i;
     struct epoll_event events[MAXEVENTS];
     int to_write;
     int written;
@@ -188,14 +188,13 @@ Echo (ThreadArgs *p)
                     (events[i].events & EPOLLHUP) ||
                     (events[i].events & !EPOLLIN)) {
                 printf ("epoll error!\n");
-                close (events[i].data.fd);
+                return -1;
             } else if (events[i].data.fd == p->servicefd) {
                 // Someone is trying to connect; ignore. All clients should have
                 // connected already.
                 continue;
             } else if (events[i].events & EPOLLIN) {
                 // There's data to be read
-                done = 0;
                 to_write = 0;
                 memset (rcv_buf, 0, PSIZE);
 
@@ -211,14 +210,13 @@ Echo (ThreadArgs *p)
                 // Just in case
                 if (to_write == 0) {
                     printf ("towrite\n");
-                    exit (-122);
+                    return -1;
                 }
 
                 if (j == 0) {
                     // The other side is disconnected
                     perror ("server read");
-                    done = 1;  // Close this socket
-                    nconnections--; 
+                    return -1;
                 } else if (j < 0) {
                     if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
                         // We've read all the data; echo it back to the client
@@ -229,8 +227,7 @@ Echo (ThreadArgs *p)
                             if (j < 0) {
                                 if ((errno != EAGAIN) && (errno != EWOULDBLOCK)) {
                                     perror ("server write");
-                                    done = 1;
-                                    nconnections--;
+                                    return -1;
                                 }
                                 break;
                             }
@@ -244,29 +241,19 @@ Echo (ThreadArgs *p)
                         // Just in case
                         if (written == 0) {
                             printf ("written\n");
-                            exit (-122);
+                            return -1;
                         }
 
-                        if (!done) {
-                            (p->counter)++;
-                        } 
+                        (p->counter)++;
                     } else {
                         perror ("server read2");
-                        done = 1; 
-                        nconnections--;
-                    }
-                }
-
-                if (done) {
-                    close (events[i].data.fd);
-                    if (nconnections <= 0) {
-                        printf ("No more connections left! Exiting...\n");
-                        exit (-122);
+                        return -1;
                     }
                 }
             }
         }
     }
+    return 0;
 }
 
 

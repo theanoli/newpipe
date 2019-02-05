@@ -132,6 +132,24 @@ TimestampTxRx (ThreadArgs *p)
     while (p->program_state != experiment) {
     }
     
+    // Send initial message to get things started
+    sendtime = PreciseWhen ();
+    snprintf (pbuf, PSIZE, "%lld,%.9ld",
+            (long long) sendtime.tv_sec, sendtime.tv_nsec);
+    for (i = 0; i < p->nports; i++) {
+        j = write (p->nports_array[i], pbuf, PSIZE - 1);
+        if (j < 0) {
+            perror ("client write");
+            return -1;
+        }
+
+        n = setsock_nonblock (p->nports_array[i]);
+        if (n < 0) {
+            id_print (p, "Couldn't setsock to nonblock!\n");
+            return -1;
+        }
+    }
+    
     // Client will be immediately put into experiment mode after 
     // startup phase
     while (p->program_state == experiment) {
@@ -183,7 +201,7 @@ TimestampTxRx (ThreadArgs *p)
                         return -1;
                     }
                 }
-            } else if (events[i].events & EPOLLOUT) {
+                
                 // Send a timestamp
                 written = 0;
                 memset (pbuf, 0, PSIZE);
@@ -357,7 +375,7 @@ Setup (ThreadArgs *p)
             lsin->sin_addr.s_addr = inet_addr (p->host);
             lsin->sin_port = htons (p->port);
 
-            sockfd = socket (AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+            sockfd = socket (AF_INET, SOCK_STREAM, 0);
             if (sockfd < 0) {
                 id_print (p, "Failed to create socket!\n");
                 exit (-10);
@@ -389,6 +407,7 @@ Setup (ThreadArgs *p)
             }
 
             memset ((char *) lsin, 0, sizeof (*lsin));
+            p->nports_array[i] = sockfd;
         }
 
     } else {

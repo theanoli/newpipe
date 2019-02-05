@@ -52,7 +52,7 @@ def process_tput_dataframe(df):
     newdf.columns = cols
     return newdf.dropna()
 
-def load_client_data(experiment):
+def load_client_data(experiment, errors):
     path_base = os.path.join(home, results_dir, experiment)
     files = os.listdir(path_base)
     latency_files = list(filter(lambda x: "latency.dat" in x, files))
@@ -79,7 +79,8 @@ def load_client_data(experiment):
         except:
             # Need to investigate what is wrong with this file; do not continue
             print("%s: derped on file %s" % (experiment, fname))
-            raise
+            errors.value += 1
+            return
 
     latencies = []
     for fname in latency_files:
@@ -99,11 +100,13 @@ def load_client_data(experiment):
             latencies.append(latency[['latency', 'sendtime']])
         except IndexError:
             print("\t%s: Index error on file %s" % (experiment, fname))
-            pass
+            errors.value += 1
+            return
         except:
             # Need to investigate what is wrong with this file; do not continue
             print("%s: derped on file %s" % (experiment, fname))
-            raise
+            errors.value += 1
+            return
     
     #return pd.concat(latencies, ignore_index=True), tputs
     return latencies, server_tput, client_tputs
@@ -118,11 +121,11 @@ def load_config(experiment):
             settings[key] = val
     return settings
 
-def worker(experiment, return_dict):
+def worker(experiment, return_dict, errors):
     print("Loading experiment " + experiment)
 
     # Load/process data
-    latencies, server_tput, client_tputs = load_client_data(experiment)
+    latencies, server_tput, client_tputs = load_client_data(experiment, errors)
 
     # Load/process config information
     config = load_config(experiment)
@@ -145,6 +148,7 @@ def worker(experiment, return_dict):
 if __name__ == '__main__':
     print("--------------------------------------------------------------------------------")
     print("Pickler is getting ready to pickle...")
+
     home = os.getcwd()
     try: 
         results_dir = sys.argv[1]
@@ -164,12 +168,13 @@ if __name__ == '__main__':
 
     manager = multiprocessing.Manager()
     return_dict = manager.dict()
+    errors = manager.Value('i', 0)
 
     jobs = []
     for experiment in experiments:
         if experiment not in experiment_dict.keys():
             p = multiprocessing.Process(target=worker, args=(experiment,
-                return_dict))
+                return_dict, errors))
             jobs.append(p)
             p.start()
 
@@ -179,6 +184,8 @@ if __name__ == '__main__':
     experiment_dict.update(return_dict)
     print("\nNew experiment_dict keys:")
     [print(key) for key in experiment_dict.keys()]
+
+    print("\n%d error(s) in processing." % errors.value)
 
     print("\nPickling!")
     with open(os.path.join(home, results_dir, 'experiment_dict.pickle'), 'w+b') as f:

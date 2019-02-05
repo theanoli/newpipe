@@ -57,7 +57,7 @@ def throughput():
                 y=y,
                 legendgroup=exp,
                 line=dict(color=color),
-                name="%ds, %dcli, ct" % (nserver_threads, nclients),
+                name="%ds, %dcli" % (nserver_threads, nclients),
                 mode='lines+markers',))
         i += 1
 
@@ -144,10 +144,8 @@ def throughput_latency(data_dict):
     for nservers, grouped_data in grouped_data_dict.items():
         data.append(Scatter(x=grouped_data['x'],
             y=grouped_data['y'],
-            mode='lines+markers+text',
+            mode='lines+markers',
             name='%s servers' % nservers,
-            textposition='top right',
-            text=["%d" % x for x in grouped_data['nclients']],
             ))
 
     layout = Layout(

@@ -26,7 +26,7 @@
 #define FNAME_BUF 256
 #define LBUFSIZE 512
 
-#define DEBUG 1
+#define DEBUG 0
 #define CLIENT_DEBUG 1
 #define SERV_DEBUG 0
 
@@ -101,6 +101,7 @@ struct threadargs
     int        commfd;        /* Communication file descriptor                 */
     short   port;          /* Port used for connection/listening */
     short   nports;         /* How many connections to open on client */
+    short nports_array[16];
     ProtocolStruct prot;   /* Protocol-depended stuff                       */
 
     char    *host;          /* Name of receiving host                       */

@@ -23,7 +23,7 @@
 #define DEFPORT 8000
 #define MAXEVENTS 16
 #define MAXEVENTS_CLI 16
-#define MAXNPORTS 64
+#define MAXNPORTS 128
 #define FNAME_BUF 256
 #define LBUFSIZE 512
 

@@ -19,9 +19,9 @@ cp generate_plot.py results
 cp pickle_data.py results
 cp experiment_batch_script.sh results
 
-ntrials=3
+ntrials=1
 
-nclient_ports_min=64
+nclient_ports_min=128
 nclient_ports_max=128
 
 nserver_threads_min=1

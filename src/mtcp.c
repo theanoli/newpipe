@@ -107,13 +107,14 @@ int write_helper (ThreadArgs *p, int sockfd)
     int j;
     mctx_t mctx = p->prot.mctx;
 
+    memset (pbuf, 0, PSIZE);
     sendtime = PreciseWhen ();
     snprintf (pbuf, PSIZE, "%lld,%.9ld",
             (long long) sendtime.tv_sec, sendtime.tv_nsec);
     written = 0;
     while (1) {
         j = mtcp_write (mctx, sockfd, pbuf + written, 
-                PSIZE - 1 - written);
+                PSIZE - written);
         if (j < 0) {
             if (errno != EAGAIN) {
                 perror ("client write");
@@ -122,14 +123,14 @@ int write_helper (ThreadArgs *p, int sockfd)
         }
 
         written += j;
-        if (written >= PSIZE - 1) {
+        if (written >= PSIZE) {
             break;
         }
     }
 
     debug_print (p, DEBUG_PORTS, "Wrote %s, %d bytes to server\n", pbuf, written);
 
-    if (written < PSIZE - 1) {
+    if (written < PSIZE) {
         id_print (p, "written: only wrote %d bytes\n", written);
         return -1;
     }
@@ -200,7 +201,7 @@ TimestampTxRx (ThreadArgs *p)
 
                 while (1) {
                     j = mtcp_read (mctx, events[i].data.sockid, pbuf + nread, 
-                            PSIZE - nread);
+                            PSIZE - nread + 1);
                     if (j < 0) {
                         break;
                     }
@@ -293,7 +294,7 @@ Echo (ThreadArgs *p)
 
                 while (1) {
                     j = mtcp_read (mctx, events[i].data.sockid, rcv_buf + to_write,
-                            PSIZE - to_write);
+                            PSIZE - to_write + 1);
                     if (j < 0) {
                         break;
                     }
@@ -471,7 +472,6 @@ Setup (ThreadArgs *p)
 void
 establish (ThreadArgs *p)
 {
-    // TODO this FD needs to get added to an epoll instance
     socklen_t clen;
     int nevents, i;
     struct mtcp_epoll_event events[MAXEVENTS];
@@ -495,7 +495,7 @@ establish (ThreadArgs *p)
     id_print (p, "Starting loop to wait for connections...\n");
 
     while (p->program_state == startup) {
-        nevents = mtcp_epoll_wait (mctx, p->ep, events, MAXEVENTS, 0); 
+        nevents = mtcp_epoll_wait (mctx, p->ep, events, 256, 0); 
         if (nevents < 0) {
             if (errno != EINTR) {
                 perror ("epoll_wait");
@@ -534,7 +534,7 @@ establish (ThreadArgs *p)
                     }
 
                     connections++;
-                    if (!(connections % 50)) {
+                    if (!(connections % 16)) {
                         printf ("%d connections so far...\n", connections);
                     }
                 }

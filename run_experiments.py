@@ -37,7 +37,7 @@ class Experiment(object):
         self.unpin_cthreads = args.unpin_cthreads
 
         self.machine_dict, self.clients, self.servers = self.read_machine_info()
-        self.clients = self.clients[::-1][:self.nclient_machines]
+        self.clients = self.clients[:self.nclient_machines]
 
         timestamp = int(time.time())
         if self.outfile == None:

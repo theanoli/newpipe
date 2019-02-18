@@ -134,7 +134,7 @@ def worker(experiment, return_dict, errors):
                           'server_tput': server_tput,
                           'client_tputs': client_tputs,
                           'config': config,
-                          'nclients': int(config['total_clients']),
+                          'nclients': int(config['total_clients']) * int(config['nclient_ports']),
                           'nclient_threads': int(config['nclient_threads']),
                           'nserver_threads': int(config['nserver_threads']),
                           }

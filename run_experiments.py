@@ -37,7 +37,7 @@ class Experiment(object):
         self.unpin_cthreads = args.unpin_cthreads
 
         self.machine_dict, self.clients, self.servers = self.read_machine_info()
-        self.clients = self.clients[:self.nclient_machines]
+        self.clients = self.clients[::-1][:self.nclient_machines]
 
         timestamp = int(time.time())
         if self.outfile == None:
@@ -134,7 +134,6 @@ class Experiment(object):
     def launch_clients(self):
         # Launch the client-side programs
         self.printer("Launching clients...")
-        i = 0
         subprocesses = []
 
         for client in self.clients:
@@ -221,7 +220,6 @@ if __name__ == "__main__":
     experiment.printer("Running experiment!")
     experiment.kill_zombie_processes()
     server = experiment.launch_server()
-    time.sleep(1)
     clients = experiment.launch_clients()
     server.wait()
     experiment.printer("Completed experiment!")

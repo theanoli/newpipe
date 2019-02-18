@@ -1,8 +1,11 @@
 sudo pip3 install colorlover
 
 {
-cmd="./NPtcp"
-make tcp
+#cmd="./NPtcp"
+#make tcp
+
+cmd="sudo ./NPmtcp"
+make mtcp
 
 ret=$?
 if [[ $ret != 0 ]]; then
@@ -18,49 +21,55 @@ cp experiment_batch_script.sh results
 
 ntrials=3
 
-nclient_ports=4
+nclient_ports_min=64
+nclient_ports_max=128
 
-nserver_threads_min=8
+nserver_threads_min=1
 nserver_threads_max=8
 
-nclient_threads_min=2
-nclient_threads_max=64
+nclient_threads_min=16
+nclient_threads_max=16
 
 nclient_machines_min=1
 nclient_machines_max=1
 
-title="with increasing client thread/machine count,<br>\
-    $nserver_threads_min server threads, $ntrials trial(s); 16 TX/RX queues"
+title="with increasing #connections per client thread<br>\
+    1x16 servers, 1x16 clients (machines x threads), 3 trials"
 
 nserver_threads=$nserver_threads_min
 while [ $nserver_threads -le $nserver_threads_max ]; do
+    nclient_threads=$nserver_threads
 
     nclient_machines=$nclient_machines_min
     while [ $nclient_machines -le $nclient_machines_max ]; do
 
-        nclient_threads=$nclient_threads_min
-        while [ $nclient_threads -le $nclient_threads_max ]; do
+        #nclient_threads=$nclient_threads_min
+        #while [ $nclient_threads -le $nclient_threads_max ]; do
 
-            trial=1
-            while [ $trial -le $ntrials ]; do
-                echo Trial $trial: Running with $nclient_machines client machines, \
-                    $nserver_threads server threads, \
-                    $nclient_threads client threads
-                python run_experiments.py theano "$cmd" \
-                    --expduration 30 \
-                    --nclient_machines $nclient_machines \
-                    --nclient_threads $nclient_threads \
-                    --nserver_threads $nserver_threads \
-                    --unpin_sthreads \
-                    --unpin_cthreads \
-                    --nclient_ports $nclient_ports
-                echo
-                ((trial=$trial+1))
+            nclient_ports=$nclient_ports_min
+            while [ $nclient_ports -le $nclient_ports_max ]; do
+                trial=1
+                while [ $trial -le $ntrials ]; do
+                    echo Trial $trial: Running with $nclient_machines client machines, \
+                        $nserver_threads server threads, \
+                        $nclient_threads client threads, \
+                        $nclient_ports ports per client thread
+                    python run_experiments.py theano "$cmd" \
+                        --expduration 30 \
+                        --nclient_machines $nclient_machines \
+                        --nclient_threads $nclient_threads \
+                        --nserver_threads $nserver_threads \
+                        --nclient_ports $nclient_ports
+                    echo
+                    ((trial=$trial+1))
+
+                done
+                ((nclient_ports=$nclient_ports*2))
 
             done
-            ((nclient_threads=$nclient_threads*2))
+            #((nclient_threads=$nclient_threads*2))
 
-        done
+        #done
         ((nclient_machines=$nclient_machines*2))
 
     done

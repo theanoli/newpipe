@@ -23,6 +23,7 @@
 #define DEFPORT 8000
 #define MAXEVENTS 16
 #define MAXEVENTS_CLI 16
+#define MAXNPORTS 64
 #define FNAME_BUF 256
 #define LBUFSIZE 512
 
@@ -101,7 +102,7 @@ struct threadargs
     int        commfd;        /* Communication file descriptor                 */
     short   port;          /* Port used for connection/listening */
     short   nports;         /* How many connections to open on client */
-    short nports_array[16];
+    short nports_array[MAXNPORTS];
     ProtocolStruct prot;   /* Protocol-depended stuff                       */
 
     char    *host;          /* Name of receiving host                       */
@@ -188,3 +189,4 @@ void setup_filenames (ThreadArgs *targs);
 void record_throughput ();
 void debug_print (ThreadArgs *p, int debug_id, const char *format, ...);
 void id_print (ThreadArgs *p, const char *format, ...);
+void write_latency_data (ThreadArgs *p, FILE *out, char *pbuf, struct timespec *recvtime);

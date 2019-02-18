@@ -162,7 +162,8 @@ TimestampTxRx (ThreadArgs *p)
 
         for (i = 0; i < n; i++) {
             if ((events[i].events & EPOLLERR) ||
-                    (events[i].events & EPOLLHUP)) {
+                    (events[i].events & EPOLLHUP) ||
+                    (events[i].events & !EPOLLIN)) {
                 // Error; exit
                 id_print (p, "epoll error!\n");
                 return -1;
@@ -398,7 +399,7 @@ Setup (ThreadArgs *p)
                 exit (-7);
             }
             
-            event.events = EPOLLOUT | EPOLLIN;
+            event.eventN;
             event.data.fd = sockfd;
             ret = epoll_ctl (p->ep, EPOLL_CTL_ADD, sockfd, &event);
             if (ret < 0) {

@@ -5,8 +5,6 @@
 
 #include "harness.h"
 
-#define NRTTS 1000
-
 extern char *optarg;
 
 // Initialize these here so they are accessible to signal handler
@@ -70,6 +68,11 @@ main (int argc, char **argv)
                       break;
 
             case 'p': args.nports = atoi (optarg);
+                      if (args.nports > MAXNPORTS) {
+                          printf ("Number of client connections exceeds max!"
+                                  " Exiting...\n");
+                          exit (-1);
+                      }
                       break;
 
             case 'u': args.expduration = atoi (optarg);
@@ -112,9 +115,11 @@ main (int argc, char **argv)
 
         // Wait a few seconds to let clients come online
         printf ("Waiting for clients to start up and connect...\n"); 
+        fflush (stdout);
         sleep (STARTUP);
 
         printf ("Entering warmup period...\n"); 
+        fflush (stdout);
 
         // Start a recorder thread for throughput
         pthread_create (&recorder_tid, NULL, ThroughputRecorder, (void *)&args);
@@ -127,14 +132,17 @@ main (int argc, char **argv)
         sleep (WARMUP);
         
         printf ("Starting experiment period...\n");
+        fflush (stdout);
         UpdateProgramState (experiment);
         sleep (args.expduration);
 
         printf ("Experiment over, cooling down...\n");
+        fflush (stdout);
         UpdateProgramState (cooldown);
         sleep (COOLDOWN);
 
         printf ("All done!\n");
+        fflush (stdout);
         UpdateProgramState (end);
     }
 
@@ -270,6 +278,27 @@ setup_filenames (ThreadArgs *targs)
 
 
 void
+write_latency_data (ThreadArgs *p, FILE *out, char *pbuf, struct timespec *recvtime)
+{
+    int m; 
+
+    if (p->lbuf_offset > (LBUFSIZE - 41)) {
+        // Flush the buffer to file
+        // 41 is longest possible write
+        fwrite (p->lbuf, 1, p->lbuf_offset, out);
+        memset (p->lbuf, 0, LBUFSIZE);
+        p->lbuf_offset = 0;
+    } else {
+        // There's more capacity in the buffer
+        m = snprintf (p->lbuf + p->lbuf_offset, PSIZE*2, "%s,%lld,%.9ld\n", 
+                pbuf,
+                (long long) recvtime->tv_sec, recvtime->tv_nsec);
+        p->lbuf_offset += m;
+    }
+}
+
+
+void
 debug_print (ThreadArgs *p, int debug_id, const char *format, ...)
 {
     if (debug_id) {
@@ -341,6 +370,7 @@ double
 When (void)
 {
     // Low-resolution timestamp for coarse-grained measurements
+    // Returns current time in seconds
     struct timeval tp;
     gettimeofday (&tp, NULL);
     return ((double) tp.tv_sec + (double) tp.tv_usec * 1e-6);

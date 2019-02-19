@@ -5,6 +5,8 @@
 
 #include "harness.h"
 
+#define PRINT_RETRANSMITS 1
+
 extern char *optarg;
 
 // Initialize these here so they are accessible to signal handler
@@ -124,10 +126,13 @@ main (int argc, char **argv)
         // Start a recorder thread for throughput
         pthread_create (&recorder_tid, NULL, ThroughputRecorder, (void *)&args);
 
+        // Send epoll or sockfd around to other server threads
         if (!strcmp (whichproto, "TCP")) {
-            // Send the commfd around to other server threads
-            UpdateEpFds ();
+            UpdateFds (1);  // use epollfd
+        } else if (!strcmp (whichproto, "UDP")) {
+            UpdateFds (0); // use sockfd
         }
+
         UpdateProgramState (warmup);
         sleep (WARMUP);
         
@@ -195,12 +200,29 @@ ThroughputRecorder (void *vargp)
     // Do this every (interval) seconds
     while (args->program_state != end) {
         record_throughput (args, out);
+        if ((PRINT_RETRANSMITS) && args->tr) {
+            aggregate_retransmits (args);
+        }
         sleep (1);
     }
 
     fclose (out);
 
     return 0;
+}
+
+
+void
+aggregate_retransmits (ProgramArgs *args)
+{
+    int i; 
+    int total_retransmits = 0;
+
+    for (i = 0; i < args->nthreads; i++) {
+        total_retransmits += args->thread_data[i].retransmits; 
+    }
+    printf ("[%s] %d retransmits so far\n", args->machineid, total_retransmits);
+    fflush (stdout);
 }
 
 
@@ -245,14 +267,23 @@ UpdateProgramState (ProgramState state)
 
 
 void 
-UpdateEpFds (void)
+UpdateFds (int do_ep)
 {
-    int i;
-    int ep = args.thread_data[0].ep;
-    printf ("Updating everyone to ep %d\n", ep);
+    int i, fd;
+    if (do_ep) {
+        fd = args.thread_data[0].ep;
+        printf ("Updating everyone to ep %d\n", fd);
 
-    for (i = 1; i < args.nthreads; i++) {
-        args.thread_data[i].ep = ep;
+        for (i = 1; i < args.nthreads; i++) {
+            args.thread_data[i].ep = fd;
+        }
+    } else {
+        fd = args.thread_data[0].commfd;
+        printf ("Updating everyone to commfd %d\n", fd);
+
+        for (i = 1; i < args.nthreads; i++) {
+            args.thread_data[i].commfd = fd;
+        }
     }
 }
 
@@ -362,6 +393,27 @@ SignalHandler (int signum) {
     } else if (signum == SIGTERM) {
         printf ("Oooops got interrupted...\n");
         exit (0);
+    }
+}
+
+
+void
+WriteLatencyData (ThreadArgs *p, FILE *out, char *pbuf, struct timespec *recvtime)
+{
+    int m; 
+
+    if (p->lbuf_offset > (LBUFSIZE - 41)) {
+        // Flush the buffer to file
+        // 41 is longest possible write
+        fwrite (p->lbuf, 1, p->lbuf_offset, out);
+        memset (p->lbuf, 0, LBUFSIZE);
+        p->lbuf_offset = 0;
+    } else {
+        // There's more capacity in the buffer
+        m = snprintf (p->lbuf + p->lbuf_offset, PSIZE*2, "%s,%lld,%.9ld\n", 
+                pbuf,
+                (long long) recvtime->tv_sec, recvtime->tv_nsec);
+        p->lbuf_offset += m;
     }
 }
 

@@ -1,6 +1,7 @@
 #include "harness.h"
 
 #define DEBUG_PORTS 0
+#define READTO 0
 
 void
 Init (ProgramArgs *pargs, int *pargc, char ***pargv)

@@ -4,8 +4,11 @@ sudo pip3 install colorlover
 #cmd="./NPtcp"
 #make tcp
 
-cmd="sudo ./NPmtcp"
-make mtcp
+#cmd="sudo ./NPmtcp"
+#make mtcp
+
+cmd="./NPudp"
+make udp
 
 ret=$?
 if [[ $ret != 0 ]]; then
@@ -21,30 +24,29 @@ cp experiment_batch_script.sh results
 
 ntrials=1
 
-nclient_ports_min=128
-nclient_ports_max=128
+nclient_ports_min=1
+nclient_ports_max=1
 
-nserver_threads_min=1
+nserver_threads_min=2
 nserver_threads_max=8
 
 nclient_threads_min=16
 nclient_threads_max=16
 
-nclient_machines_min=1
-nclient_machines_max=1
+nclient_machines_min=2
+nclient_machines_max=8
 
-title="with increasing #connections per client thread<br>\
-    1x16 servers, 1x16 clients (machines x threads), 3 trials"
+title="with UDP, increasing number of clients<br>\
+    1 server machine, 8 client threads per machine, 1 trials"
 
 nserver_threads=$nserver_threads_min
 while [ $nserver_threads -le $nserver_threads_max ]; do
-    nclient_threads=$nserver_threads
 
     nclient_machines=$nclient_machines_min
     while [ $nclient_machines -le $nclient_machines_max ]; do
 
-        #nclient_threads=$nclient_threads_min
-        #while [ $nclient_threads -le $nclient_threads_max ]; do
+        nclient_threads=$nclient_threads_min
+        while [ $nclient_threads -le $nclient_threads_max ]; do
 
             nclient_ports=$nclient_ports_min
             while [ $nclient_ports -le $nclient_ports_max ]; do
@@ -67,9 +69,9 @@ while [ $nserver_threads -le $nserver_threads_max ]; do
                 ((nclient_ports=$nclient_ports*2))
 
             done
-            #((nclient_threads=$nclient_threads*2))
+            ((nclient_threads=$nclient_threads*2))
 
-        #done
+        done
         ((nclient_machines=$nclient_machines*2))
 
     done

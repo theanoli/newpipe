@@ -27,7 +27,6 @@
 #define FNAME_BUF 256
 #define LBUFSIZE 512
 
-#define DEBUG 0
 #define CLIENT_DEBUG 1
 #define SERV_DEBUG 0
 
@@ -36,7 +35,6 @@
 #define STARTUP 4
 #define WARMUP 10
 #define COOLDOWN 10
-#define READTO 0
 
 // TCP-specific
 #if defined(TCP)
@@ -166,7 +164,7 @@ struct data
 
 void InterruptThreads ();
 void UpdateProgramState (ProgramState state);
-void UpdateEpFds ();
+void UpdateFds (int do_ep);
 double When ();
 void SignalHandler (int signum);
 struct timespec PreciseWhen ();
@@ -189,4 +187,5 @@ void setup_filenames (ThreadArgs *targs);
 void record_throughput ();
 void debug_print (ThreadArgs *p, int debug_id, const char *format, ...);
 void id_print (ThreadArgs *p, const char *format, ...);
-void write_latency_data (ThreadArgs *p, FILE *out, char *pbuf, struct timespec *recvtime);
+void WriteLatencyData (ThreadArgs *p, FILE *out, char *pbuf, struct timespec *recvtime);
+void aggregate_retransmits (ProgramArgs *p);

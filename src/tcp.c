@@ -1,5 +1,6 @@
 #include "harness.h"
 
+#define READTO 0
 
 void
 Init (ProgramArgs *pargs, int *pargc, char ***pargv)
@@ -84,32 +85,11 @@ LaunchThreads (ProgramArgs *pargs)
 }
 
 
-void
-write_latency_data (ThreadArgs *p, FILE *out, char *pbuf, struct timespec *recvtime)
-{
-    int m; 
-
-    if (p->lbuf_offset > (LBUFSIZE - 41)) {
-        // Flush the buffer to file
-        // 41 is longest possible write
-        fwrite (p->lbuf, 1, p->lbuf_offset, out);
-        memset (p->lbuf, 0, LBUFSIZE);
-        p->lbuf_offset = 0;
-    } else {
-        // There's more capacity in the buffer
-        m = snprintf (p->lbuf + p->lbuf_offset, PSIZE*2, "%s,%lld,%.9ld\n", 
-                pbuf,
-                (long long) recvtime->tv_sec, recvtime->tv_nsec);
-        p->lbuf_offset += m;
-    }
-}
-
-
 int
 TimestampTxRx (ThreadArgs *p)
 {
     // Send and then receive an echoed timestamp.
-    // Return a pointer to the stored timestamp. 
+    // Return a negative value if error, else return 0.
     int i, j, n;
     struct epoll_event events[MAXEVENTS_CLI];
     int nread; 
@@ -192,7 +172,7 @@ TimestampTxRx (ThreadArgs *p)
                         (p->counter)++;
 
                         if ((!p->no_record) && (p->counter % 1000 == 0)) {
-                            write_latency_data (p, out, pbuf, &recvtime);
+                            WriteLatencyData (p, out, pbuf, &recvtime);
                         }
 
                         debug_print (p, DEBUG, 
@@ -353,7 +333,6 @@ Setup (ThreadArgs *p)
     struct sockaddr_in *lsin;
     
     int ret, i, port;
-    char portno[7]; 
 
     int flags;
 
@@ -361,7 +340,6 @@ Setup (ThreadArgs *p)
 
     lsin = &(p->prot.sin1);
     memset ((char *) lsin, 0, sizeof (*lsin));
-    sprintf (portno, "%d", p->port);  // the port client will connect to
     
     if (p->tr) {
         p->ep = epoll_create (1);
@@ -399,7 +377,7 @@ Setup (ThreadArgs *p)
                 exit (-7);
             }
             
-            event.eventN;
+            event.events = EPOLLIN | EPOLLET;
             event.data.fd = sockfd;
             ret = epoll_ctl (p->ep, EPOLL_CTL_ADD, sockfd, &event);
             if (ret < 0) {

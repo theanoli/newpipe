@@ -40,7 +40,7 @@ main (int argc, char **argv)
     args.program_state = startup;
 
     /* Parse the arguments. See Usage for description */
-    while ((c = getopt (argc, argv, "no:d:H:T:c:P:p:u:li")) != -1)
+    while ((c = getopt (argc, argv, "no:d:H:T:c:P:p:u:m:li")) != -1)
     {
         switch (c)
         {
@@ -78,6 +78,10 @@ main (int argc, char **argv)
                       break;
 
             case 'u': args.expduration = atoi (optarg);
+                      break;
+
+            // For eRPC: the control IP of this machine
+            case 'm': args.prot.myip = optarg;
                       break;
 
             case 'i': args.pin_threads = 1;
@@ -154,7 +158,11 @@ main (int argc, char **argv)
     pthread_join (recorder_tid, NULL);
 
     for (i = 0; i < args.nthreads; i++) {
+#ifndef ERPC
         pthread_join (args.tids[i], NULL);
+#else 
+        args.tids[i].join();
+#endif
     }
 
     return 0;
@@ -242,7 +250,7 @@ record_throughput (ProgramArgs *args, FILE *out)
     }
 
     memset (buf, 0, 32);
-    snprintf (buf, 32, "%lld,%.9ld,%"PRIu64"\n", (long long) now.tv_sec, 
+    snprintf (buf, 32, "%lld,%.9ld,%" PRIu64 "\n", (long long) now.tv_sec, 
             now.tv_nsec, total_npackets);
     n = fwrite (buf, 1, strlen (buf), out);
     if (n < strlen (buf)) {
@@ -372,13 +380,13 @@ CollectStats (ProgramArgs *p)
         // else save results to file
         char *argv[8];
 
-        argv[0] = "collectl";
-        argv[1] = "-P";
-        argv[2] = "-f";
+        argv[0] = (char *)"collectl";
+        argv[1] = (char *)"-P";
+        argv[2] = (char *)"-f";
         argv[3] = outfile;
-        argv[4] = "-sc";
+        argv[4] = (char *)"-sc";
         argv[5] = nsamples;
-        argv[6] = "-oaz";
+        argv[6] = (char *)"-oaz";
         argv[7] = NULL;
         execvp ("collectl", argv);
     }

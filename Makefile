@@ -12,8 +12,9 @@
 CC         = gcc
 CFLAGS     = -g -O3 -Wall -Werror -pthread
 SRC        = ./src
+ERPC	   = /proj/sequencer/eRPC
 
-all: tcp mtcp udp 
+all: tcp mtcp udp erpc
 
 clean:
 	rm -f *.o NP* np.out
@@ -33,7 +34,7 @@ UTIL_FLD = /proj/sequencer/mtcp/util
 UTIL_INC = -I${UTIL_FLD}/include
 
 INC 	= -I./include/ ${UTIL_INC} ${MTCP_INC} -I${UTIL_FLD}/include
-LIBS	= ${MTCP_LIB}
+MTCP_LIBS	= ${MTCP_LIB}
 
 # CFLAGS for DPDK-related compilation
 INC 	+= ${MTCP_INC}
@@ -41,8 +42,9 @@ DPDK_MACHINE_FLAGS = $(shell cat /proj/sequencer/mtcp/dpdk/include/cflags.txt)
 INC 	+= ${DPDK_MACHINE_FLAGS} -I${DPDK_INC} -include $(DPDK_INC)/rte_config.h
 
 DPDK_LIB_FLAGS = $(shell cat /proj/sequencer/mtcp/dpdk/lib/ldflags.txt)
-LIBS 	+= -m64 -g -O3 -pthread -lrt -march=native -export-dynamic ${MTCP_FLD}/lib/libmtcp.a -L../../dpdk/lib -lnuma -lmtcp -lpthread -lrt -ldl ${DPDK_LIB_FLAGS}
+MTCP_LIBS 	+= -m64 -g -O3 -pthread -lrt -march=native -export-dynamic ${MTCP_FLD}/lib/libmtcp.a -L../../dpdk/lib -lnuma -lpthread -lrt -ldl ${DPDK_LIB_FLAGS}
 
+ERPC_LIBS	= -lerpc -lpthread -lnuma -ldl
 
 #--- Compile the binaries ---#
 
@@ -53,5 +55,7 @@ udp: $(SRC)/udp.c $(SRC)/harness.c $(SRC)/harness.h
 	$(CC) $(CFLAGS) $(SRC)/harness.c $(SRC)/udp.c -DTCP -Dwhichproto=\"UDP\" -o NPudp -I$(SRC)
 
 mtcp: $(SRC)/mtcp.c $(SRC)/harness.c $(SRC)/harness.h 
-	$(CC) $(CFLAGS) $(SRC)/harness.c $(SRC)/mtcp.c -DMTCP -Dwhichproto=\"mTCP\" -o NPmtcp -I$(SRC) ${INC} ${LIBS} -lmtcp -lnuma -pthread -lrt
+	$(CC) $(CFLAGS) $(SRC)/harness.c $(SRC)/mtcp.c -DMTCP -Dwhichproto=\"mTCP\" -o NPmtcp -I$(SRC) ${INC} ${MTCP_LIBS} -lmtcp -lnuma -pthread -lrt
 
+erpc: $(SRC)/erpc.cc $(SRC)/harness.c $(SRC)/harness.h
+	g++ -g -std=c++11 -o NPerpc $(SRC)/harness.c $(SRC)/erpc.cc -I $(ERPC)/src -I /usr/include/dpdk -L $(ERPC)/build $(ERPC_LIBS) -ldpdk -DDPDK=true -DERPC -Dwhichproto=\"ERPC\"

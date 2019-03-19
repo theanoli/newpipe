@@ -1,4 +1,6 @@
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -36,6 +38,8 @@
 #define WARMUP 10
 #define COOLDOWN 10
 
+typedef struct protocolstruct ProtocolStruct;
+
 // TCP-specific
 #if defined(TCP)
   #include <netdb.h>
@@ -43,7 +47,6 @@
   #include <netinet/tcp.h>
   #include <arpa/inet.h>
 
-  typedef struct protocolstruct ProtocolStruct;
   struct protocolstruct
   {
       struct sockaddr_in      sin1,   /* socket structure #1              */
@@ -62,7 +65,6 @@
   #include <mtcp_api.h>
   #include <mtcp_epoll.h>
 
-  typedef struct protocolstruct ProtocolStruct;
   struct protocolstruct
   {
       struct sockaddr_in      sin1,   /* socket structure #1              */
@@ -73,8 +75,19 @@
                               rcvbufsz; /* Size of TCP receive buffer     */
       mctx_t                  mctx;
   };
-#else 
-  #error "TCP must be defined during compilation!"
+#elif defined(ERPC)
+  #include <cstring>
+  #include "rpc.h"
+  #include "util/numautils.h"
+
+  struct protocolstruct {
+      erpc::Nexus *nexus;
+      std::string myip;
+      erpc::Rpc<erpc::CTransport> *rpc;
+      int session_num;
+      erpc::MsgBuffer req_msgbuf;
+      erpc::MsgBuffer resp_msgbuf;
+  };
 #endif
 
 // Global data structures
@@ -119,8 +132,8 @@ struct threadargs
     volatile int ep;                 /* For epoll file descriptor                    */
     uint64_t retransmits;   /* Only useful for unreliable transports        */
 
-    // timer data 
     volatile ProgramState program_state;
+    FILE *out;
     uint8_t *done;
 };
 
@@ -141,7 +154,12 @@ struct programargs
     char    *outdir;
     char    *outfile;
 
+#ifdef ERPC
+    std::vector<std::thread> tids;
+#else
     pthread_t *tids;        /* Thread handles                               */
+#endif
+
     ThreadArgs *thread_data;    /* Array of per-thread data structures      */
 
     // Possibly obsolete
@@ -149,6 +167,7 @@ struct programargs
     
     uint8_t pin_threads;
     uint8_t done;
+    ProtocolStruct prot;   /* Protocol-depended stuff                       */
 };
 
 typedef struct data Data;
@@ -184,7 +203,7 @@ void PrintUsage();
 void CollectStats (ProgramArgs *p);
 int getopt( int argc, char * const argv[], const char *optstring);
 void setup_filenames (ThreadArgs *targs);
-void record_throughput ();
+void record_throughput (ProgramArgs *targs, FILE *out);
 void debug_print (ThreadArgs *p, int debug_id, const char *format, ...);
 void id_print (ThreadArgs *p, const char *format, ...);
 void WriteLatencyData (ThreadArgs *p, FILE *out, char *pbuf, struct timespec *recvtime);

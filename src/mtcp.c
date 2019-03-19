@@ -215,7 +215,7 @@ TimestampTxRx (ThreadArgs *p)
                     (p->counter)++;
 
                     if ((!p->no_record) && (p->counter % 1000 == 0)) {
-                        write_latency_data (p, out, pbuf, &recvtime);
+                        WriteLatencyData (p, out, pbuf, &recvtime);
                     }
 
                     debug_print (p, DEBUG_PORTS, 
@@ -232,6 +232,7 @@ TimestampTxRx (ThreadArgs *p)
                 }
             }
         }
+        sleep (1);
     }
     return 0;
 }

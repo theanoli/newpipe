@@ -4,11 +4,11 @@ sudo pip3 install colorlover
 #cmd="./NPtcp"
 #make tcp
 
-#cmd="sudo ./NPmtcp"
-#make mtcp
+cmd="sudo ./NPmtcp"
+make mtcp
 
-cmd="./NPudp"
-make udp
+#cmd="./NPudp"
+#make udp
 
 ret=$?
 if [[ $ret != 0 ]]; then
@@ -27,14 +27,14 @@ ntrials=1
 nclient_ports_min=1
 nclient_ports_max=1
 
-nserver_threads_min=2
-nserver_threads_max=8
+nserver_threads_min=1
+nserver_threads_max=1
 
-nclient_threads_min=16
-nclient_threads_max=16
+nclient_threads_min=1
+nclient_threads_max=1
 
-nclient_machines_min=2
-nclient_machines_max=8
+nclient_machines_min=1
+nclient_machines_max=1
 
 title="with UDP, increasing number of clients<br>\
     1 server machine, 8 client threads per machine, 1 trials"
@@ -57,11 +57,11 @@ while [ $nserver_threads -le $nserver_threads_max ]; do
                         $nclient_threads client threads, \
                         $nclient_ports ports per client thread
                     python run_experiments.py theano "$cmd" \
-                        --expduration 30 \
-                        --nclient_machines $nclient_machines \
-                        --nclient_threads $nclient_threads \
-                        --nserver_threads $nserver_threads \
-                        --nclient_ports $nclient_ports
+                         --expduration 30 \
+                         --nclient_machines $nclient_machines \
+                         --nclient_threads $nclient_threads \
+                         --nserver_threads $nserver_threads \
+                         --nclient_ports $nclient_ports
                     echo
                     ((trial=$trial+1))
 

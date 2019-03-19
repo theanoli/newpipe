@@ -5,7 +5,7 @@
 
 #include "harness.h"
 
-#define PRINT_RETRANSMITS 1
+#define PRINT_RETRANSMITS 0
 
 extern char *optarg;
 

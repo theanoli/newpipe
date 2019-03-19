@@ -29,9 +29,14 @@ Init (ProgramArgs *pargs, int *pargc, char ***pargv)
         exit (-10);
     }
     pargs->tids = std::vector<std::thread>(pargs->nthreads);
+    // Override standard port
+    pargs->port = 31850;
 
-    // Create Nexus object and register handlers (if server)
-    pargs->prot.nexus = new erpc::Nexus (pargs->prot.myip, 0, 0);
+    // Create Nexus object and (if server) register handlers
+    std::string uri = (std::string)pargs->prot.myip + ":" + std::to_string(pargs->port);
+    printf("My URI: %s\n", uri.c_str());
+    fflush (stdout);
+    pargs->prot.nexus = new erpc::Nexus (uri, 0, 0);
     if (!pargs->tr) {
         pargs->prot.nexus->register_req_func(kReqType, echo_handler);
     }
@@ -50,8 +55,11 @@ LaunchThreads (ProgramArgs *pargs)
         targs[i].threadid = i;
         snprintf (targs[i].threadname, 128, "[%s.%d]", pargs->machineid, i);
 
-        // All clients will connect to the same server port
-        targs[i].port = pargs->port;
+        if (pargs->tr) {
+            targs[i].port = (pargs->port + i) % pargs->ncli;
+        } else {
+            targs[i].port = pargs->port + i;
+        }
         targs[i].host = pargs->host;
         targs[i].tr = pargs->tr;
         targs[i].program_state = startup;
@@ -163,14 +171,37 @@ Echo (ThreadArgs *p)
 }
 
 
+std::vector<size_t> flags_get_numa_ports(size_t numa_node) {
+  std::vector<size_t> ret;
+
+  std::string port_str =
+      numa_node == 0 ? "0" : "1";
+  if (port_str.size() == 0) return ret;
+
+  std::vector<std::string> split_vec;
+  boost::split(split_vec, port_str, boost::is_any_of(","));
+  erpc::rt_assert(split_vec.size() > 0);
+
+  for (auto &s : split_vec) {
+    boost::trim(s);
+    ret.push_back(std::stoull(s));
+  }
+
+  return ret;
+}
+
+
 void
 Setup (ThreadArgs *p)
 {
     // Create RPC endpoints and (client only) connect to other endpoint
+    std::vector<size_t> port_vec = flags_get_numa_ports(0);
+    erpc::rt_assert(port_vec.size() > 0);
+    uint8_t phy_port = port_vec.at(p->threadid % port_vec.size());
     p->prot.rpc = new erpc::Rpc<erpc::CTransport>(p->prot.nexus, 
             static_cast<void *>(p),  // Thread context
             static_cast<uint8_t>(p->threadid),  // ThreadID
-            sm_handler);  // Session management handler
+            sm_handler, phy_port);  // Session management handler
 
     p->prot.req_msgbuf = p->prot.rpc->alloc_msg_buffer_or_die(PSIZE);
     p->prot.resp_msgbuf = p->prot.rpc->alloc_msg_buffer_or_die(PSIZE);

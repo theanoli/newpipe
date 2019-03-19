@@ -35,6 +35,7 @@ class Experiment(object):
         self.expduration = args.expduration
         self.unpin_sthreads = args.unpin_sthreads
         self.unpin_cthreads = args.unpin_cthreads
+        self.use_ctrlip = args.use_ctrlip
 
         self.machine_dict, self.clients, self.servers = self.read_machine_info()
         self.clients = self.clients[:self.nclient_machines]
@@ -91,6 +92,7 @@ class Experiment(object):
             iface = fields[2]
             mac = fields[3]
             ip = fields[4]
+            ctrl_ip = fields[5]
 
             if "server" in machinename:
                 servers.append(machinename)
@@ -102,6 +104,7 @@ class Experiment(object):
                     'iface': iface,
                     'mac': mac,
                     'ip': ip,
+                    'ctrl_ip': ctrl_ip
             }
 
         f.close()
@@ -124,6 +127,8 @@ class Experiment(object):
             serv_cmd += " -l"
         if not self.unpin_sthreads:
             serv_cmd += " -i"
+        if self.use_ctrlip:
+            serv_cmd += " -m %s" % self.machine_dict['server-0']['ctrl_ip']
 
         ssh = "ssh -p 22 %s@%s.emulab.net 'cd %s; %s;'" % (self.whoami,
                 self.machine_dict['server-0']['machineid'], self.wdir, serv_cmd)
@@ -148,6 +153,8 @@ class Experiment(object):
                     " -P %d" % self.start_port)
             if not self.unpin_cthreads:
                 cmd += " -i"
+            if self.use_ctrlip:
+                cmd += " -m %s" % self.machine_dict[client]['ctrl_ip']
 
             ssh = "ssh -p 22 %s@%s.emulab.net 'cd %s; %s'" % (self.whoami, 
                     self.machine_dict[client]['machineid'], self.wdir, cmd)
@@ -213,6 +220,10 @@ if __name__ == "__main__":
             help=('How many connections to open per client thread'),
             type=int,
             default=1)
+    parser.add_argument('--use_ctrlip',
+            help=('Whether to include the control IP address for client machines',
+                ' (used in eRPC only for now)'),
+            action='store_true')
 
     args = parser.parse_args()
 

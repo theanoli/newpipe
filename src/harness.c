@@ -80,9 +80,11 @@ main (int argc, char **argv)
             case 'u': args.expduration = atoi (optarg);
                       break;
 
+#ifdef ERPC
             // For eRPC: the control IP of this machine
             case 'm': args.prot.myip = optarg;
                       break;
+#endif
 
             case 'i': args.pin_threads = 1;
                       break;

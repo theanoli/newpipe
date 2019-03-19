@@ -4,11 +4,14 @@ sudo pip3 install colorlover
 #cmd="./NPtcp"
 #make tcp
 
-cmd="sudo ./NPmtcp"
-make mtcp
+#cmd="sudo ./NPmtcp"
+#make mtcp
 
 #cmd="./NPudp"
 #make udp
+
+cmd="sudo ./NPerpc"
+#make erpc
 
 ret=$?
 if [[ $ret != 0 ]]; then
@@ -61,7 +64,8 @@ while [ $nserver_threads -le $nserver_threads_max ]; do
                          --nclient_machines $nclient_machines \
                          --nclient_threads $nclient_threads \
                          --nserver_threads $nserver_threads \
-                         --nclient_ports $nclient_ports
+                         --nclient_ports $nclient_ports \
+                         --use_ctrlip 
                     echo
                     ((trial=$trial+1))
 

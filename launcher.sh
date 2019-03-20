@@ -40,10 +40,10 @@ while [ $trial -le $ntrials ]; do
             popd
            
             sleep 5
-            cp /tmp/small_rpc_tput_stats_1 ./results/c"$concurrency"_t"$nthreads_$trial"
+            cp /tmp/small_rpc_tput_stats_1 ./results/c"$concurrency"_t"$nthreads"_"$trial"
 
             sudo pkill -9 small_rpc
-            ssh -p 22 theano@server0.emulab.net screen -d -m "sudo pkill -9 small_rpc"
+            ssh -p 22 theano@$server0.emulab.net screen -d -m "sudo pkill -9 small_rpc"
 
             ((concurrency=$concurrency*2))
         done

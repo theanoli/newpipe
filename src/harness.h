@@ -88,6 +88,42 @@ typedef struct protocolstruct ProtocolStruct;
       erpc::MsgBuffer resp_msgbuf;
       short sm_port;
   };
+#elif defined(TCATS)
+  #include "state.h"
+  #include "common.h"
+
+  #define TX_CORE 1
+  #define RX_CORE 5
+  
+  #define NB_MBUF 65535  // should be 2**n - 1
+  
+  #define MAX_TX_BURST 16
+  #define MAX_RX_BURST 32
+  
+  #define MAX_PKTS_PER_SEC 14800000ULL
+  
+  #define MEMPOOL_CACHE_SIZE 256
+  
+  #define MAX_RX_QUEUE_PER_LCORE 16
+  
+  #define RTE_TEST_RX_DESC_DEFAULT 512
+  #define RTE_TEST_TX_DESC_DEFAULT 512
+  
+  #define TIMER_RESOLUTION 10  // in us // destroy this?
+  
+  #define PKT_TIMEOUT 1000000 //1000000 // in us
+  #define EPOCH 1000 //1000  // The epoch duration in us; should be ~1RTT
+  
+  #define GC_PERIOD_USEC 10000 //750000 // 500 ms, .5 s
+  
+  #define SEQ_HEARTBEAT_TO 750000 //5*TIMER_RESOLUTION
+  
+  #define BATCH_SIZE_COUNTER_INCREMENT 50
+  #define BATCH_SIZE_COUNTER_ARRAY_SIZE 127
+
+  struct protocolstruct {
+
+  }
 #endif
 
 // Global data structures

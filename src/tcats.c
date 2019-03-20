@@ -1,23 +1,505 @@
 #include "harness.h"
 
+#define CWND_MULTIPLIER 250
+
+bool force_quit = 0;
+
+// Do I need to do this? 
+ThreadArgs targs;
+ThreadArgs *p = &targs;
+
+/* mask of enabled ports */
+static uint32_t seqcli_enabled_port_mask = 1;
+static unsigned int seqcli_rx_queue_per_lcore = 1;
+
+uint64_t timer_period = 1; // seconds to print out stats
+
+struct rte_mempool *seqcli_rx_pktmbuf_pool = NULL;
+struct rte_mempool *seqcli_tx_pktmbuf_pool = NULL;
+uint8_t proxy_id;
+uint64_t total_pkts_tx = 0;
+uint64_t total_pkts_rx = 0; 
+uint64_t total_pkts_dropped = 0;
+uint64_t client_retx = 0;
+uint64_t slow_retx = 0;
+uint64_t fast_retx = 0;
+
+uint64_t total_requests_served = 0;
+
+uint8_t seqcli_ethport = 0;
+struct ether_addr eth_addr;
+
+// Timer stuff
+uint64_t pkt_timeout_tsc;
+int timer_resolution_us;
+
+// Configurable number of RX/TX ring descriptors todo configure these
+uint16_t nb_rxd = RTE_TEST_RX_DESC_DEFAULT;
+uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT;
+
+struct rte_eth_dev_tx_buffer *tx_buffer;
+struct rte_eth_dev_rx_buffer *rx_buffer;
+
+cc_state_t sequencer_state;
+
+uint64_t core_frequency = 0;
+
+// Use parse_mac_address_from_string with this
+struct ether_addr __attribute__((unused)) sequencer_addr;  // Sequencer
+
+
+void
+parse_mac_address_from_string (char *str_addr, struct ether_addr *mac_address_struct)
+{
+    char tmp[18];
+
+    strncpy (tmp, str_addr + 18, 17); 
+    tmp[17] = '\0';
+
+    sscanf(tmp, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+           &mac_address_struct->addr_bytes[0],
+           &mac_address_struct->addr_bytes[1],
+           &mac_address_struct->addr_bytes[2],
+           &mac_address_struct->addr_bytes[3],
+           &mac_address_struct->addr_bytes[4],
+           &mac_address_struct->addr_bytes[5]
+           );
+}
+
+
+/*--- From packet_handling.c ---------------------------------------------------*/
+// constructs a single packet; desc is a seq_pkt_t
+inline void
+pkt_ctor(struct rte_mbuf *mbuf, seq_hdr_t *pkt_template, void *payload, 
+        size_t pkt_size, struct ether_addr *dest_addr) {
+    mbuf->packet_type = IPPROTO_UDP;
+
+    // This is not exactly correct (not all pkts are seq_pkts) but avoids
+    // having to cast to seq_hdr_t a bunch of times below
+    seq_pkt_t *dst = (seq_pkt_t *)rte_pktmbuf_append (mbuf, pkt_size); 
+
+    // In the mbuf
+    struct ether_hdr    *eth = (struct ether_hdr *) &dst->hdr.eth;
+    struct ipv4_hdr     *ip = (struct ipv4_hdr *) &dst->hdr.uip.ip;
+    struct udp_hdr      *udp = (struct udp_hdr *) &dst->hdr.uip.udp;
+
+    // Copy template and then payload
+    rte_memcpy ((void *) dst, (uint8_t *) pkt_template, sizeof (seq_hdr_t));
+    rte_memcpy ((void *) &dst->payload, (uint8_t *) payload, 
+            pkt_size - sizeof (seq_hdr_t));
+
+    // This MUST be done again for completely non-obvious reasons
+    ether_addr_copy(dest_addr, &eth->d_addr);
+    ether_addr_copy(&eth_addr, &eth->s_addr);
+
+    udp->dgram_cksum = 0;
+    ip->hdr_checksum = 0;
+
+    // Update the checksums in the mbuf
+    udp->dgram_cksum = rte_ipv4_udptcp_cksum(ip, udp);
+    ip->hdr_checksum = rte_ipv4_cksum(ip);
+}
+
+// Pre-fill all packet header fields; dest address may be NULL (e.g., for
+// populating the client header template)
+void
+populate_header (seq_hdr_t *hdr, struct ether_addr *addr)
+{
+    struct ether_hdr    *eth = (struct ether_hdr *) &hdr->eth;
+    struct ipv4_hdr     *ip = (struct ipv4_hdr *) &hdr->uip.ip;
+    struct udp_hdr      *udp = (struct udp_hdr *) &hdr->uip.udp;
+
+    // Construct the ethernet header
+    if (addr != NULL) {
+        ether_addr_copy (addr, &eth->d_addr);
+    }
+    ether_addr_copy (&eth_addr, &eth->s_addr);
+    eth->ether_type = htons (ETHER_TYPE_IPv4);
+
+    // Construct the IPv4 header
+    ip->version_ihl = (4 << 4) | (sizeof(struct ipv4_hdr) / IPV4_IHL_MULTIPLIER); // version_ihl
+    ip->time_to_live = 8; // time_to_live, not going far...
+    // todo looks like I didn't use hton here, don't think I need to
+    ip->next_proto_id = IPPROTO_UDP;
+
+    // these don't really matter here? probably only eth routing
+    ip->src_addr = htonl(IPv4(10, 1, 1, 2)); // same
+    ip->dst_addr = htonl(IPv4(10, 1, 1, 3)); // same
+
+	// needs to be set to zero for the layer 4 checksum done after this call
+	// probably should be done here, then reset to zero, I think this would be a better structure
+    ip->hdr_checksum = 0;
+    udp->dgram_cksum = 0;
+    udp->dgram_len = htons(sizeof (seq_pkt_t)
+            - sizeof (struct ipv4_hdr)
+            - sizeof (struct ether_hdr));
+
+    if (addr != NULL) {
+        if (is_same_ether_addr_custom (addr, &sequencer_addr)) {
+            udp->dst_port = (uint16_t) SEQUENCER;
+        } else {
+            force_quit = 1;
+            printf ("Invalid packet addr!\n");
+            return;
+        }
+    }
+
+    ip->total_length = htons(sizeof (seq_pkt_t) - sizeof (struct ether_hdr));
+}    
+
+
+void
+receive_packets (void)
+{
+    uint16_t nb_rx; 
+    uint16_t i = 0;
+    struct rte_mbuf *rx_pkts[MAX_RX_BURST]; 
+    int ret __attribute__((unused));
+
+    nb_rx = rte_eth_rx_burst(0, 0, rx_pkts, MAX_RX_BURST);
+    for (i = 0; i < nb_rx; i++) {
+        if (force_quit) {
+            printf("Force quitting in receive_packets\n");
+            return;
+        }
+         
+        seq_pkt_t *pkt = rte_pktmbuf_mtod (rx_pkts[i], seq_pkt_t *);
+        machine_id_t sender_id = get_sender_id (pkt);
+
+        debug_print(DEBUG, "Received a packet: sender_id: %d\n", sender_id);
+
+        switch (sender_id) {
+            case SEQUENCER:
+                process_seq_pkt (rx_pkts[i]);
+                break;
+
+            default:
+                printf ("Unidentified sender!\n");
+                force_quit = 1;
+                return;
+        }
+
+        // free the packet to allow dpdk to use it again
+        rte_pktmbuf_free (rx_pkts[i]);
+        total_pkts_rx++;
+    }
+}
+
+
+// Callback function for retx on TO
+void
+pkt_timer_cb (struct rte_timer *tim, void *arg)
+{
+    desc_t *desc = (desc_t *) arg;
+    handle_event (TIMEOUT, desc->cc_state);
+    slow_retx++;
+    retransmit (tim, desc);
+}
+
+
+// Callback function for retx on TO or fast recovery
+void
+retransmit (struct rte_timer *tim, desc_t *desc)
+{
+    int idx = desc->payload.ring_idx;
+    cc_state_t *state = desc->cc_state;
+    seq_hdr_t *packet_template = &state->packet_template;
+    payload_t *payload = &state->request_ring[idx].payload;
+
+    struct rte_mbuf *mbuf = rte_pktmbuf_alloc (seqcli_tx_pktmbuf_pool);
+    if (mbuf == NULL) {
+        printf ("retransmit: Couldn't allocate an mbuf! Exiting...\n");
+        force_quit = 1;
+        return;
+    }
+
+    if (DEBUG) {
+        printf ("Retransmitting ring_idx %d, machine %d\n", idx,
+                state->machine_id);
+    }
+    payload->rpc_status = RETX;
+
+    pkt_ctor (mbuf, packet_template, (void *) payload, sizeof (seq_pkt_t), 
+            state->receiver);
+
+    rte_eth_tx_buffer(seqcli_ethport, 0, tx_buffer, mbuf);
+    rte_eth_tx_buffer_flush(seqcli_ethport, 0, tx_buffer);
+
+    rte_timer_reset_sync(tim, pkt_timeout_tsc,
+                         SINGLE, rte_lcore_id(), &pkt_timer_cb, desc);
+
+    total_pkts_tx++;
+}
+
+
+inline void
+send_packets (cc_state_t *state)
+{
+    int ret;
+    struct rte_mbuf *mbufs[MAX_TX_BURST];
+    uint16_t i;
+    int idx __attribute__((unused));
+    int nsent;
+    desc_t *request_desc;
+    payload_t *request_payload;
+
+    // grab nburst pkts from the pool
+    ret = rte_pktmbuf_alloc_bulk (seqcli_tx_pktmbuf_pool, mbufs, MAX_TX_BURST);
+    if (ret < 0) {
+        printf ("Couldn't allocate any mbufs! Exiting...\n");
+        force_quit = 1;
+        return;
+    }
+
+    machine_id_t receiver = state->machine_id;
+
+    for (i = 0; i < MAX_TX_BURST; i++) {
+        request_desc = get_next_free_descriptor (state);
+        if (request_desc == NULL) {
+            break;
+        } 
+
+        // TODO add timestamp here?
+        request_payload = &request_desc->payload;
+        prepare_request_for_sending (state, request_desc, batch_desc);
+
+        pkt_ctor (mbufs[i], &state->packet_template, (void *) request_payload, 
+                sizeof (seq_pkt_t), state->receiver);
+
+        ret = rte_eth_tx_buffer (seqcli_ethport, 0, tx_buffer, mbufs[i]);
+        total_pkts_tx += ret;
+
+        send_list[i] = request_payload->ring_idx;
+        state->next_pkt_id++;
+    }
+
+    nsent = i;
+    for (; i < MAX_TX_BURST; i++) {
+        rte_pktmbuf_free (mbufs[i]);
+    }
+        
+    ret = rte_eth_tx_buffer_flush (seqcli_ethport, 0, tx_buffer);
+    total_pkts_tx += ret;
+
+    for (i = 0; i < nsent; i++) {
+        idx = send_list[i];
+        rte_timer_reset_sync (&state->pkt_timers[idx], pkt_timeout_tsc,
+                SINGLE, 
+                rte_lcore_id(), &pkt_timer_cb, &state->request_ring[idx]);
+    }
+    memset (&send_list, 0, sizeof (send_list));
+}
+
+
+// TODO can remove everything about batching here?
+inline void
+prepare_request_for_sending (cc_state_t *state, desc_t *request_desc, batch_desc_t *batch_desc)
+{
+    // update local descriptors and CC data before sending out packet
+    // to sequencer or dependency tracker
+    payload_t *request_payload = &request_desc->payload;
+    uint16_t request_idx = request_payload->ring_idx;
+    machine_id_t receiver = state->machine_id;
+
+    // For CC: Update highest sent packet ID
+    if (request_payload->pkt_id > state->highest_sent_pkt_id) {
+        state->highest_sent_pkt_id = request_payload->pkt_id;
+    }
+}
+/*--- END From packet_handling.c -----------------------------------------------*/
+
+/*--- From sequencer_comm.c ----------------------------------------------------*/
+int
+process_seq_pkt (struct rte_mbuf *mbuf) 
+{
+    uint16_t idx;
+    int i;
+    client_desc_t *client_desc;
+    uint64_t seq_num;
+
+    seq_pkt_t *pkt = rte_pktmbuf_mtod (mbuf, seq_pkt_t *);
+
+    struct ether_hdr    *eth = (struct ether_hdr *) &pkt->hdr.eth;
+    payload_t           *payload = (payload_t *) &pkt->payload;
+
+    // filter out lldp packets and packets from other clients 
+    if (eth->ether_type == 0xCC88) {
+        return 0;
+    }
+
+    // recovery stuff
+    // always mark this as the time we have received something from the sequencer
+    // (should we do this at the end of this function?)
+    // todo check if this is tracking liveness of new sequencer now
+    timer_reset(&seq_alive_timer);
+
+    // todo check if this is a heartbeat packet (used to check if the
+    // sequencer is alive when we haven't heard a response but also have
+    // not recently sent something to the sequencer)
+    if (payload->rpc_status == HEARTBEAT) {
+        printf("was heartbeat, returning\n");
+        have_pinged_sequencer = 0;
+        return 0;
+    }
+
+//    // todo I think we don't need this anymore?
+//    if (payload->rpc_status == SEND_BITMAP_AND_DEPS) {
+//        printf("in sending bitmap switch\n");
+//        recovery_send_bitmap_and_deps();
+//        printf("SENT THE TEST MESSAGE\n");
+//        force_quit = 1;
+//        return 0;
+//    }
+
+    idx = payload->ring_idx;
+
+    // Find the corresponding sequencer ring descriptor, which contains
+    // info about which client send this request
+    payload_t *seq_desc_payload = &sequencer_state.request_ring[idx].payload;
+    batch_desc_t *batch_desc = &batch_ring[sequencer_state.request_ring[idx].batch_ring_idx];
+
+    // the first && expression checks if we have already received a response to 
+    // this descriptor; second checks that this is the correct request_id
+    if ((seq_desc_payload->rpc_status != READY) &&
+        (seq_desc_payload->pkt_id == payload->pkt_id)) {
+
+        rte_timer_stop_sync (&sequencer_state.pkt_timers[idx]);
+        if ((payload->pkt_id % 10000) == 0) {
+            printf ("[proxy%d] Got seqnum %"PRIu64" for pkt_id %"PKT_ID_FMT", "
+                    "status %d\n", proxy_id, payload->seq_num, 
+                    payload->pkt_id, payload->rpc_status); 
+        }
+
+        seq_desc_payload->rpc_status = READY;
+        seq_desc_payload->seq_num = payload->seq_num;
+
+        // keep a max sn seen, and put that into the DT packet
+        if (max_sequence_number < payload->seq_num) {
+            max_sequence_number = payload->seq_num;
+        }
+
+        if (TRACK_REQUESTS) {
+            // todo is this unlikely???
+            if (track_client_req_id && track_added_to_batch && track_batch_idx == batch_desc->batch_ring_idx) { //track_client_req_id == client_desc->payload.req_id) {
+                track_now_timestamp = rte_rdtsc();
+                fprintf(track_file, "process_seq_pkt: %"PRIu64" %Lf\n",
+                        track_now_timestamp, cycles_to_usec((track_now_timestamp - track_last_timestamp)));
+                track_last_timestamp = track_now_timestamp;
+                track_added_to_batch = 0; // it is no longer associated with any batch!
+            }
+        }
+
+        // the batch range is [seq_num - batch_size + 1, seq_num]
+        for (i = 0; i < payload->batch_size; i++) {
+            seq_num = payload->seq_num - payload->batch_size + 1 + i;
+            client_desc = &client_data[batch_desc->client_ids[i]];
+
+            client_desc->payload.seq_num = seq_num;
+
+            client_desc->req_status = CLIREQ_PERSISTING;
+
+            bitmap_insert_seq_num (seq_num);
+
+            // put the client request in the priority queue because
+            // it is ready to be sent once it is persisted
+            client_pq_elems[batch_desc->client_ids[i]].seq_num = seq_num;
+            PQueue_insert(minPQ, &client_pq_elems[batch_desc->client_ids[i]]);
+        }
+        
+        free_batch (batch_desc);
+
+        process_ack (seq_desc_payload, &sequencer_state);
+
+        // Record the sequence number & pkt_id and dump to file
+#if(TEST_SEQUENCER == 1)
+        int ret = record_seqnum (&sequencer_state.request_ring[idx].payload,
+                seq_test_data);
+        if (ret < 0) { 
+            printf ("Failed writing test data!\n");
+            force_quit = 1;
+        } else if (sequencer_state.request_ring[idx].payload.pkt_id > req_limit) {
+            if (force_quit != 1) {
+                printf ("Received sufficient requests to complete test!\n");
+                force_quit = 1;
+            }
+        }
+#endif   
+
+    } else {
+        // Something went wrong here; possibly an old retransmit?
+        if ((payload->seq_num % 1) == 0) {
+            printf ("ReqIDs didn't match or descriptor is in RCVD state (2): %"
+                    PKT_ID_FMT" state %d vs received %"PKT_ID_FMT" state %d\n",
+                    sequencer_state.request_ring[idx].payload.pkt_id,
+                    sequencer_state.request_ring[idx].payload.rpc_status,
+                    payload->pkt_id, payload->rpc_status);
+        }
+    }
+
+    return 0;
+}
+
+// Find the next unfulfilled sequencerequest (status NEW)
+inline batch_desc_t *
+get_next_unfulfilled_seq_request (void)
+{
+    uint8_t idx = sequencer_state.next_batch_ring_idx;
+    batch_desc_t *desc;
+
+    desc = &batch_ring[idx];
+
+    while ((desc->batch_status != BATCH_SEQNUM_NEEDED) && (!force_quit)) {
+        idx = (idx + 1) % BATCH_RING_SIZE;
+
+        if (idx == sequencer_state.next_batch_ring_idx) {
+            return NULL;
+        }
+
+        desc = &batch_ring[idx];
+    }
+
+    // Sanity check---this should never happen during normal operation
+    if ((desc->batch_status != BATCH_SEQNUM_NEEDED) && (!force_quit)) {
+        printf ("Incorrect transition to status BATCH_SEQNUM_NEEDED: wrong status\n");
+        force_quit = 1;
+        return NULL;
+    }
+
+    if (TRACK_REQUESTS) {
+        // todo is this unlikely???
+        if (track_client_req_id && track_added_to_batch && track_batch_idx == desc->batch_ring_idx) {
+            track_now_timestamp = rte_rdtsc();
+            fprintf(track_file, "get_next_unfulfilled_seq_request: %"PRIu64" %Lf\n",
+                    track_now_timestamp, cycles_to_usec((track_now_timestamp - track_last_timestamp)));
+            track_last_timestamp = track_now_timestamp;
+        }
+    }
+
+    // Need to change this so the descriptor doesn't get re-selected
+    desc->batch_status = BATCH_SEQNUM_REQUESTED;
+
+    sequencer_state.next_batch_ring_idx = idx;
+    if (force_quit) {
+        return NULL;
+    } else {
+        return desc;
+    }
+}
+
+
+void
+send_packets_to_sequencer (void)
+{
+    send_packets (&sequencer_state);
+}
+/*--- END From sequencer_comm.c ------------------------------------------------*/
+
+
 void
 Init (ProgramArgs *pargs, int *pargc, char ***pargv)
 {
-    // Allocate memory for per-thread data structures
-    ThreadArgs *p = (ThreadArgs *)calloc (pargs->nthreads, 
-            sizeof (ThreadArgs));
-
-    if (p == NULL) {
-        printf ("Error malloc'ing space for thread args!\n");
-        exit (-10);
-    }
+    // Global variable for TCATS since there's only one thread
     pargs->thread_data = p;
-
-    pargs->tids = (pthread_t *)calloc (pargs->nthreads, sizeof (pthread_t));
-    if (pargs->tids == NULL) {
-        printf ("Failed to malloc space for tids!\n");
-        exit (-82);
-    }
 }
 
 
@@ -26,56 +508,49 @@ LaunchThreads (ProgramArgs *pargs)
 {
     // Copy relevant data to thread data structures and launch
     // threads
-    int i, ret;
-    int nprocs_onln;
-    cpu_set_t cpuset;
+    int ret;
 
-    ThreadArgs *targs = pargs->thread_data;
+    // only one thread... 
+    p->machineid = pargs->machineid;
+    p->threadid = i;
+    snprintf (p->threadname, 128, "[%s.%d]", pargs->machineid, i);
 
-    for (i = 0; i < pargs->nthreads; i++) {
-        targs[i].machineid = pargs->machineid;
-        targs[i].threadid = i;
-        snprintf (targs[i].threadname, 128, "[%s.%d]", pargs->machineid, i);
+    // All clients will connect to the same server port
+    p->host = pargs->host;
+    p->tr = pargs->tr;
+    p->program_state = startup;
 
-        // All clients will connect to the same server port
-        targs[i].host = pargs->host;
-        targs[i].tr = pargs->tr;
-        targs[i].program_state = startup;
+    // For servers, this is how many clients from which to expect connections.
+    // For clients, this is how many total server threads there are. 
+    p->ncli = pargs->ncli;
+    p->no_record = pargs->no_record;
+    p->counter = 0;
 
-        // For servers, this is how many clients from which to expect connections.
-        // For clients, this is how many total server threads there are. 
-        targs[i].ncli = pargs->ncli;
-        targs[i].no_record = pargs->no_record;
-        targs[i].counter = 0;
-
-        if (pargs->no_record) {
-            printf ("Not recording measurements to file.\n");
-        } else {    
-            setup_filenames (&targs[i]);
-            if (pargs->tr) {
-                targs[i].lbuf = (char *) malloc (LBUFSIZE);
-                if (targs[i].lbuf == NULL) {
-                    printf ("Couldn't allocate space for latency buffer! Exiting...\n");
-                    exit (-14);
-                }
-                targs[i].lbuf_offset = 0;
-                memset (targs[i].lbuf, 0, LBUFSIZE);
+    if (pargs->no_record) {
+        printf ("Not recording measurements to file.\n");
+    } else {    
+        setup_filenames (&targs[i]);
+        if (pargs->tr) {
+            p->lbuf = (char *) malloc (LBUFSIZE);
+            if (p->lbuf == NULL) {
+                printf ("Couldn't allocate space for latency buffer! Exiting...\n");
+                exit (-14);
             }
+            p->lbuf_offset = 0;
+            memset (p->lbuf, 0, LBUFSIZE);
         }
-
-        // printf ("[%s] Launching thread %d, ", pargs->machineid, i);
-        // printf ("connecting to portno %d\n", targs[i].port);
-        fflush (stdout);
-
-        pthread_create (&pargs->tids[i], NULL, ThreadEntry, (void *)&targs[i]);
     }
+
+    fflush (stdout);
 }
 
 
 void
-GenerateTimestamp (char *pbuf)
+generate_timestamp_str (char *pbuf)
 {
     struct timespec sendtime;
+    memset (pbuf, 0, PSIZE);
+
     sendtime = PreciseWhen ();
     snprintf (pbuf, PSIZE, "%lld,%.9ld",
             (long long) sendtime.tv_sec, sendtime.tv_nsec);
@@ -83,7 +558,7 @@ GenerateTimestamp (char *pbuf)
 
 
 void
-HandleReceivedTimestamp (ThreadArgs *p, FILE *out, char *pbuf)
+handle_received_timestamp (ThreadArgs *p, FILE *out, char *pbuf)
 {
     struct timespec recvtime;
     recvtime = PreciseWhen ();
@@ -99,17 +574,10 @@ HandleReceivedTimestamp (ThreadArgs *p, FILE *out, char *pbuf)
 
 
 int
-TimestampTxRx (ThreadArgs *p)
+TimestampTxRx (__attribute__((unused)) void *dummy)
 {
     // Send and then receive an echoed timestamp.
     // Return a negative value if error, else return 0.
-    int i, j, n;
-    struct epoll_event events[MAXEVENTS_CLI];
-    int nread; 
-    int written;
-    char pbuf[PSIZE];  // for packets
-
-    struct timespec sendtime, recvtime;
     FILE *out;
 
     // Open file for recording latency data
@@ -126,13 +594,81 @@ TimestampTxRx (ThreadArgs *p)
     }
     
     // Send initial message to get things started
-    GenerateTimestamp (pbuf);
+    generate_timestamp_str (pbuf);
 
-    
     // Client will be immediately put into experiment mode after 
     // startup phase
     while (p->program_state == experiment) {
 
+        uint64_t max_acked_seqnum; 
+        uint64_t last_acked_seqnum = 0;
+        
+        // calculates cycles per burst
+        uint64_t hz = rte_get_tsc_hz ();
+
+        // For sequencer timing
+        uint64_t seq_period_tsc = (uint64_t) round(usec_to_cycles (hz, EPOCH) * MAX_TX_BURST / sequencer_state.cwnd);
+        timer_state_t seq_timer; timer_init(&seq_timer, seq_period_tsc);
+
+        // for dep_tracker timing, timer timing is the same
+        timer_state_t dep_tracker_0_timer; timer_init(&dep_tracker_0_timer, 0);
+        timer_state_t dep_tracker_1_timer; timer_init(&dep_tracker_1_timer, 0);
+        timer_state_t dep_tracker_2_timer; timer_init(&dep_tracker_2_timer, 0);
+
+        // Garbage collection timer information
+        timer_state_t gc_timer; timer_init(&gc_timer, usec_to_cycles(hz, GC_PERIOD_USEC));
+
+        // Timer resolution (check timers every timer_res_tsc cycles)
+        timer_state__t timers_timer; timer_init(&timers_timer, usec_to_cycles (hz,
+                    timer_resolution_us));
+
+        // todo
+    //    timer_state_t batch_timer; timer_init(&batch_timer, batch_timeout_tsc);
+
+        // Stats reporting timer information
+        timer_state_t stats_timer; timer_init(&stats_timer, hz);
+
+        // Give the main thread some time to finish coming up
+        sleep(1);
+
+        // reset the sequencer timer so that we don't declare it dead
+        // when we were just taking time to set up
+        timer_reset(&seq_alive_timer);
+
+        // loop and send a burst of packets every period_tsc
+        // Also call timer manager to see if any timers have expired
+        // Timer manager can be commented out to turn timers off
+        while (!force_quit) {
+            // todo we check this very often, don't check everytime?
+            if (timer_check(&stats_timer)) {
+                print_stats_periodically ();
+            }
+
+            // update timers based on the sending rate determined by cc
+            seq_period_tsc = (uint64_t) round(MAX_TX_BURST * (hz / (sequencer_state.cwnd * CWND_MULTIPLIER)));
+            timer_change_period(&seq_timer, seq_period_tsc);
+
+            // Receive new packets
+            receive_packets ();
+
+            // first request gets min from dep tracker
+            // then send to sequencer
+            // sending to dep_tracker waits for more requests from clients,
+            // then replies to previous clients and submits to dep_tracker?
+            // Send packets
+            if (timer_check(&seq_timer)) {
+                send_packets_to_sequencer ();
+            }
+
+            // Check the timers
+            if (timer_check(&timers_timer)) {
+                rte_timer_manage (); 
+            }
+        }
+
+        printf("lcore %u force quitting...\n", rte_lcore_id());
+
+        return 0;
     }
     return 0;
 }
@@ -149,6 +685,138 @@ Echo (ThreadArgs *p)
 
     }
     return 0;
+}
+
+
+void
+proxy_setup_rte (void) {
+    int ret;
+    
+    int i;
+    for (i = 0; i < RING_SIZE; i++) {
+        rte_timer_init(&sequencer_state.pkt_timers[i]);
+    }
+
+	// # cycles between printing
+	timer_period *= rte_get_tsc_hz(); // was timer_hz
+
+	// create RX mbuf pool
+    printf ("Setting up RX/TX mbuf pools...\n");
+	seqcli_rx_pktmbuf_pool = rte_pktmbuf_pool_create("rx_pool", NB_MBUF,
+													 MEMPOOL_CACHE_SIZE, 0, 
+                                                     RTE_MBUF_DEFAULT_BUF_SIZE, 
+                                                     rte_socket_id());
+	if (seqcli_rx_pktmbuf_pool == NULL)
+		rte_exit(EXIT_FAILURE, "Couldn't init rx mbuf pool\n");
+
+// create TX mbuf pool
+	seqcli_tx_pktmbuf_pool = rte_pktmbuf_pool_create("tx_pool", NB_MBUF,
+													 MEMPOOL_CACHE_SIZE, 0, 
+                                                     RTE_MBUF_DEFAULT_BUF_SIZE, 
+                                                     rte_socket_id());
+	if (seqcli_tx_pktmbuf_pool == NULL)
+		rte_exit(EXIT_FAILURE, "Couldn't init tx mbuf pool\n");
+
+    printf ("Checking Ethernet ports and configuring device...\n");
+	// rte_eth_dev_configure must be called before any other Ethernet functions
+	ret = rte_eth_dev_configure(seqcli_ethport, 1, 1, &port_conf);
+	if (ret < 0)
+		rte_exit(EXIT_FAILURE, "Cannot configure device: err=%d, port=%u\n",
+				 ret, (unsigned) seqcli_ethport);
+
+	uint8_t nb_ports = rte_eth_dev_count();
+	if (nb_ports != 1)
+		rte_exit(EXIT_FAILURE, "Number of Ethernet ports is not 1!!!\n");
+
+	struct rte_eth_dev_info dev_info;
+	rte_eth_dev_info_get(seqcli_ethport, &dev_info);
+
+	rte_eth_macaddr_get(seqcli_ethport, &eth_addr);
+	// rte_eth_promiscuous_enable(seqcli_ethport);
+
+    // check_all_ports_link_status (nb_ports, seqcli_enabled_port_mask);
+
+    printf ("Setting up RX/TX queues...\n");
+	// Set up the RX queue for our port
+	fflush(stdout);
+	ret = rte_eth_rx_queue_setup(seqcli_ethport, 0, nb_rxd,
+								 rte_eth_dev_socket_id(seqcli_ethport),
+								 NULL,
+								 seqcli_rx_pktmbuf_pool);
+	if (ret < 0)
+		rte_exit(EXIT_FAILURE, "rte_eth_rx_queue_setup:err=%d, port=%u\n",
+				 ret, (unsigned) seqcli_ethport);
+
+	/* init one TX queue on each port */
+	fflush(stdout);
+	ret = rte_eth_tx_queue_setup(seqcli_ethport, 0, nb_txd,
+								 rte_eth_dev_socket_id(seqcli_ethport),
+								 NULL);
+	if (ret < 0)
+		rte_exit(EXIT_FAILURE, "rte_eth_tx_queue_setup:err=%d, port=%u\n",
+				 ret, (unsigned) seqcli_ethport);
+
+    printf ("Initializing TX buffer...\n");
+	// Initialize the TX buffer todo should it be aligned? wasn't in l2fwd
+	tx_buffer = rte_zmalloc_socket("tx_buffer", RTE_ETH_TX_BUFFER_SIZE(MAX_TX_BURST), 
+                                    0, rte_eth_dev_socket_id(seqcli_ethport));
+	if (tx_buffer == NULL)
+		rte_exit(EXIT_FAILURE, "Couldn't allocate the tx buffer\n");
+
+	rte_eth_tx_buffer_init(tx_buffer, MAX_TX_BURST);
+
+    printf ("Setting error callback function...\n");
+	// todo set an error callback function for dropped packets when sending?
+	ret = rte_eth_dev_start(seqcli_ethport);
+	if (ret < 0)
+		rte_exit(EXIT_FAILURE, "rte_eth_dev_start:err=%d, port=%u\n",
+				 ret, (unsigned) seqcli_ethport);
+
+    sleep (2);
+
+    printf ("Launching RX/TX threads...\n");
+    
+    // Even-numbered CPUs for this NUMA node
+	ret = rte_eal_remote_launch(TimestampTxRx, NULL, TX_CORE);
+	if (ret < 0) {
+		rte_exit (EXIT_FAILURE, "rte_eal_remote_launch: err=%d\n",
+					ret);
+	}
+}
+
+void
+init_cc_state(cc_state_t *state, machine_id_t machine_id, uint8_t rpc_status, 
+        struct ether_addr *addr, uint8_t dt_idx) 
+{
+    uint16_t i;
+
+    // Create the template packet
+    populate_header (&state->packet_template, addr);
+
+    // Initialization of dep_tracker state
+    for (i = 0; i < RING_SIZE; i++) {
+        desc_t *desc = &state->request_ring[i];
+
+        desc->cc_state = state;
+
+        desc->payload.proxy_id = proxy_id;
+        desc->payload.ring_idx = i;
+        desc->payload.rpc_status = rpc_status; // can be used immediately
+    }
+
+    // Init sequencer state
+    state->machine_id = machine_id;
+    state->next_pkt_id = 0;
+    state->cwnd = 1;
+    state->ssthresh = 1000000;
+    state->dupack = 0;
+    state->highest_sent_pkt_id = 0;
+    state->connection_state = SLOW_START;
+    state->receiver = addr;
+    state->dt_idx = dt_idx;
+
+    // todo is this right?
+    state->next_batch_ring_idx = 0;
 }
 
 
@@ -177,15 +845,11 @@ Setup (ThreadArgs *p)
 
     // Set up whatever is needed for communication
     if (p->tr) {
-        // TODO what is happening here? 
-        // newvar: struct ether_addr *mymac
-        // newvar: struct ether_addr *hostmac (for client only)
         rte_eth_macaddr_get(seqcli_ethport, &eth_addr);
 
         hz = rte_get_tsc_hz ();
         core_frequency = rte_get_tsc_hz();
 
-        // TODO newvar: uint64_t pkt_timeout_tsc
         pkt_timeout_tsc = usec_to_cycles (hz, PKT_TIMEOUT);  // in us
 
         // Initialize request structs (ring elements)
@@ -211,64 +875,8 @@ Setup (ThreadArgs *p)
             batch_ring[i].batch_ring_idx = i;
         }
 
-        /** Client setup stuff here **/
-        // Set up the client template header
-        populate_header (&client_packet_template, NULL);
-        client_packet_template.uip.udp.dgram_len = htons (sizeof (client_payload_t) +
-                sizeof (struct udp_hdr));
-        client_packet_template.uip.ip.total_length = htons (sizeof (client_pkt_t)); 
-        client_packet_template.uip.ip.src_addr = 0;
-        client_packet_template.uip.ip.dst_addr = 0;
-
-        // setup the MinPQ for clients
-        minPQ = PQueue_new(MAX_CLIENTS, pfCompare, pfFree);
-        memset(client_pq_elems, 0, MAX_CLIENTS * sizeof(pqElem_t));
-        for (i = 0; i < nlogical_clients; i++) {
-            client_pq_elems[i].client_ring_index = i;
-        }
-
-        // we need these to be able to grow, use calloc so we can grow later
-        received_seq_nums = (uint8_t *) calloc(INIT_N_BLOCKS * BLOCK_SIZE, sizeof(uint8_t));
-        if (received_seq_nums == NULL) {
-            printf("Could not allocate memory for the bitmap!\n");
-            exit(1);
-        }
-        counts = (uint64_t *) calloc(INIT_N_BLOCKS, sizeof(uint64_t));
-        if (counts == NULL) {
-            printf("Could not allocate memory for the counts array!\n");
-            exit(1);
-        }
-
-        // set up the timer for sequencer heartbeats
-        timer_init(&seq_alive_timer, usec_to_cycles(hz, SEQ_HEARTBEAT_TO));
-
-#if(TEST_SEQUENCER == 1)
-            seq_test_data = allocate_test_datastrs (proxy_id, "seq");
-            if (seq_test_data == NULL) {
-                return -1;
-            }
-#endif
-#if(TEST_DEPTRACKER == 1)
-            dt_test_data = allocate_test_datastrs (proxy_id, "dt");
-            if (dt_test_data == NULL) {
-                return -1;
-            }
-#endif
-
-        // todo use if() or #if() ?
-        if (TRACK_REQUESTS) {
-            track_client_req_id = 0;
-            track_last_timestamp = 0;
-            track_batch_idx = 0;// this batch exists but using track_client to check
-            track_added_to_batch = 0;
-
-            // file to write to
-            track_file = fopen("tracked_requests", "w");
-            fprintf(track_file, "frequency: %"PRIu64"\n", core_frequency);
-        }
-        
         printf ("\nSetting up RTE...\n");
-        setup_rte ();
+        setup_rte_proxy ();
 
         printf ("Port %u, MAC address ", (unsigned) seqcli_ethport);
         print_mac (eth_addr);
@@ -294,8 +902,6 @@ Setup (ThreadArgs *p)
                 break;
             }
         }
-
-
     } else {
 
         establish (p);    

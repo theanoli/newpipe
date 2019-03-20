@@ -19,13 +19,10 @@ title = sys.argv[1]
 try:
     results_dir = sys.argv[2]
 except:
-    results_dir = 'results'
+    results_dir = 'results_erpc'
 
 home = os.getcwd()
 results = os.path.join(home, results_dir)
-
-with open(os.path.join(results, 'experiment_dict.pickle'), 'rb') as f:
-    experiment_dict = pickle.load(f)
 
 data_dict = {}
 
@@ -126,7 +123,7 @@ def latency_box(data_dict):
 def throughput_latency(data_dict):
     print("Generating throughput-latency...")
     for dkey in data_dict: 
-        data_dict[dkey]['latency_stat'] = data_dict[dkey]['latencies']['latency'].median()
+        data_dict[dkey]['latency_stat'] = data_dict[dkey]['latencies'].median()
         data_dict[dkey]['tput_stat'] = data_dict[dkey]['tputs'].mean()
 
     keys = sort_dict_keys(data_dict)
@@ -165,24 +162,41 @@ def sort_dict_keys(data_dict):
 
 
 def get_data_dict():
-    print("Generating data dictionary...")
-    for exp, exp_data in experiment_dict.items():
-        nclients = exp_data['nclients']
-        nservers = exp_data['nserver_threads']
-        dkey = (nservers, nclients)
+    for fname in os.listdir(results):
+        inst_tput = []
+        inst_lat = []
+        
+        m = re.match(r"c(\d+)_t(\d+)", fname)
+        if m is not None:
+            concurrency = int(m.group(1))
+            nthreads = int(m.group(2))
+            print(concurrency, nthreads)
 
-        latencies = pd.concat([x for x in exp_data['latency']], ignore_index=True)
-        tputs = exp_data['server_tput']['tput']
+            dkey = (nthreads, nthreads*concurrency)
+            with open(os.path.join(results_dir, fname), "r") as f:
+                # get rid of first/last datapoints and column names
+                lines = f.readlines()[2:-1]
 
-        if dkey not in data_dict:
-            data_dict[dkey] = {}
-            data_dict[dkey]['tputs'] = tputs
-            data_dict[dkey]['latencies'] = latencies
-        else:
-            data_dict[dkey]['tputs'] = pd.concat([data_dict[dkey]['tputs'], 
-                tputs], ignore_index=True)
-            data_dict[dkey]['latencies'] = pd.concat([data_dict[dkey]['latencies'], 
-                latencies], ignore_index=True)
+            for line in lines:
+                line = line.split()
+                line = [float(token.strip()) for token in line]
+                mrps = line[0]
+                med_latency = line[2]
+                inst_tput.append(mrps*1e6)
+                inst_lat.append(med_latency)
+
+            inst_tput = pd.Series(inst_tput)
+            inst_lat = pd.Series(inst_lat)
+            # Combine multiple trials
+            if dkey not in data_dict:
+                data_dict[dkey] = {}
+                data_dict[dkey]['tputs'] = inst_tput
+                data_dict[dkey]['latencies'] = inst_lat
+            else:
+                data_dict[dkey]['tputs'] = pd.concat([data_dict[dkey]['tputs'],
+                    inst_tput], ignore_index=True)
+                data_dict[dkey]['latencies'] = pd.concat([data_dict[dkey]['latencies'],
+                    inst_tput], ignore_index=True)
 
     return data_dict
 

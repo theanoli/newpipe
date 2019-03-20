@@ -21,8 +21,8 @@ clean:
 
 #--- All the stuff needed to compile mTCP ---#
 # DPDK library and header 
-DPDK_INC	= /proj/sequencer/mtcp/dpdk/include
-DPDK_LIB	= /proj/sequencer/mtcp/dpdk/lib/
+DPDK_INC_MTCP	= /proj/sequencer/mtcp/dpdk/include
+DPDK_LIB_MTCP	= /proj/sequencer/mtcp/dpdk/lib/
 
 # mTCP library and header 
 MTCP_FLD    = /proj/sequencer/mtcp/mtcp
@@ -39,12 +39,20 @@ MTCP_LIBS	= ${MTCP_LIB}
 # CFLAGS for DPDK-related compilation
 INC 	+= ${MTCP_INC}
 DPDK_MACHINE_FLAGS = $(shell cat /proj/sequencer/mtcp/dpdk/include/cflags.txt)
-INC 	+= ${DPDK_MACHINE_FLAGS} -I${DPDK_INC} -include $(DPDK_INC)/rte_config.h
+INC 	+= ${DPDK_MACHINE_FLAGS} -I${DPDK_INC_MTCP} -include $(DPDK_INC_MTCP)/rte_config.h
 
 DPDK_LIB_FLAGS = $(shell cat /proj/sequencer/mtcp/dpdk/lib/ldflags.txt)
 MTCP_LIBS 	+= -m64 -g -O3 -pthread -lrt -march=native -export-dynamic ${MTCP_FLD}/lib/libmtcp.a -L../../dpdk/lib -lnuma -lpthread -lrt -ldl ${DPDK_LIB_FLAGS}
 
 ERPC_LIBS	= -lerpc -lpthread -lnuma -ldl
+
+#--- Stuff needed to compile TCATS ---#
+tcats_dpdk_dir=/proj/sequencer/seq_theano/sequencer/DPDK
+TCATS_INC 	= -I${tcats_dpdk_dir}/include 
+TCATS_INC 	+= $(shell cat $${tcats_dpdk_dir}/lib/ldflags.txt) -I${tcats_dpdk_dir}/include/rte_config.h
+TCATS_LIBS 		= -lrt -march=native -lnuma -lpthread -ldl
+TCATS_LIBS  	+= $(shell cat ${tcats_dpdk_dir}/lib/ldflags.txt)
+
 
 #--- Compile the binaries ---#
 
@@ -59,3 +67,7 @@ mtcp: $(SRC)/mtcp.c $(SRC)/harness.c $(SRC)/harness.h
 
 erpc: $(SRC)/erpc.cc $(SRC)/harness.c $(SRC)/harness.h
 	g++ -g -std=c++11 -o NPerpc $(SRC)/harness.c $(SRC)/erpc.cc -I $(ERPC)/src -I /usr/include/dpdk -L $(ERPC)/build $(ERPC_LIBS) -ldpdk -DDPDK=true -DERPC -Dwhichproto=\"ERPC\"
+
+tcats: $(SRC)/tcats.c $(SRC)/harness.c $(SRC)/harness.h
+	$(CC) $(CFLAGS) $(SRC)/harness.c $(SRC)/tcats.c -DTCATS -Dwhichproto=\"TCATS\" -o NPtcats -I$(SRC) $(TCATS_INC) $(TCATS_LIBS)
+

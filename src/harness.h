@@ -22,7 +22,6 @@
 #include <unistd.h> 
 
 #define PSIZE   32
-#define DEFPORT 8000
 #define MAXEVENTS 16
 #define MAXEVENTS_CLI 16
 #define MAXNPORTS 128
@@ -87,6 +86,7 @@ typedef struct protocolstruct ProtocolStruct;
       int session_num;
       erpc::MsgBuffer req_msgbuf;
       erpc::MsgBuffer resp_msgbuf;
+      short sm_port;
   };
 #endif
 

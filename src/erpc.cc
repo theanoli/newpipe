@@ -15,8 +15,9 @@ void echo_handler(erpc::ReqHandle *req_handle, void *_p) {
     const erpc::MsgBuffer *req_msgbuf = req_handle->get_req_msgbuf();
     erpc::Rpc<erpc::CTransport>::resize_msg_buffer(
             &req_handle->pre_resp_msgbuf, PSIZE);
-    req_handle->pre_resp_msgbuf.buf[0] = req_msgbuf->buf[0];
+    req_handle->pre_resp_msgbuf.buf = req_msgbuf->buf;
     p->prot.rpc->enqueue_response(req_handle, &req_handle->pre_resp_msgbuf);
+    (p->counter)++;
 }
 
 
@@ -31,15 +32,6 @@ Init (ProgramArgs *pargs, int *pargc, char ***pargv)
     pargs->tids = std::vector<std::thread>(pargs->nthreads);
     // Override standard port
     pargs->port = 31850;
-
-    // Create Nexus object and (if server) register handlers
-    std::string uri = (std::string)pargs->prot.myip + ":" + std::to_string(pargs->port);
-    printf("My URI: %s\n", uri.c_str());
-    fflush (stdout);
-    pargs->prot.nexus = new erpc::Nexus (uri, 0, 0);
-    if (!pargs->tr) {
-        pargs->prot.nexus->register_req_func(kReqType, echo_handler);
-    }
 }
 
 
@@ -55,11 +47,13 @@ LaunchThreads (ProgramArgs *pargs)
         targs[i].threadid = i;
         snprintf (targs[i].threadname, 128, "[%s.%d]", pargs->machineid, i);
 
+        targs[i].prot.myip = pargs->prot.myip;
         if (pargs->tr) {
-            targs[i].port = (pargs->port + i) % pargs->ncli;
+            targs[i].port = pargs->port + (i % pargs->ncli);
         } else {
             targs[i].port = pargs->port + i;
         }
+        targs[i].prot.sm_port = pargs->port + i;
         targs[i].host = pargs->host;
         targs[i].tr = pargs->tr;
         targs[i].program_state = startup;
@@ -70,7 +64,6 @@ LaunchThreads (ProgramArgs *pargs)
         targs[i].ncli = pargs->ncli;
         targs[i].no_record = pargs->no_record;
         targs[i].counter = 0;
-        targs[i].prot = pargs->prot;
 
         if (pargs->no_record) {
             printf ("Not recording measurements to file.\n");
@@ -104,7 +97,7 @@ void timestamp_cont_func(void *_p, void *tag) {
     (p->counter)++;
     
     // Write to file
-    if (!p->no_record && (p->counter % 1000)) {
+    if (!p->no_record && (p->counter % 10000)) {
        WriteLatencyData(p, p->out, reinterpret_cast<char *>(p->prot.resp_msgbuf.buf), &recvtime); 
     }
 
@@ -194,7 +187,19 @@ std::vector<size_t> flags_get_numa_ports(size_t numa_node) {
 void
 Setup (ThreadArgs *p)
 {
-    // Create RPC endpoints and (client only) connect to other endpoint
+    // Create Nexus + RPC endpoints and (client only) connect to other endpoint
+    // Create Nexus object and (if server) register handlers
+    // Must connect to session manager port
+    std::string uri = (std::string)p->prot.myip + ":" + 
+        std::to_string(p->prot.sm_port);
+    id_print (p, "My URI: %s\n", uri.c_str());
+    fflush (stdout);
+    
+    p->prot.nexus = new erpc::Nexus (uri, 0, 0);
+    if (!p->tr) {
+        p->prot.nexus->register_req_func(kReqType, echo_handler);
+    }
+
     std::vector<size_t> port_vec = flags_get_numa_ports(0);
     erpc::rt_assert(port_vec.size() > 0);
     uint8_t phy_port = port_vec.at(p->threadid % port_vec.size());

@@ -33,8 +33,8 @@ nclient_ports_max=1
 nserver_threads_min=1
 nserver_threads_max=1
 
-nclient_threads_min=1
-nclient_threads_max=1
+nclient_threads_min=2
+nclient_threads_max=16
 
 nclient_machines_min=1
 nclient_machines_max=1
@@ -60,12 +60,12 @@ while [ $nserver_threads -le $nserver_threads_max ]; do
                         $nclient_threads client threads, \
                         $nclient_ports ports per client thread
                     python run_experiments.py theano "$cmd" \
-                         --expduration 30 \
+                         --expduration 10 \
                          --nclient_machines $nclient_machines \
                          --nclient_threads $nclient_threads \
                          --nserver_threads $nserver_threads \
                          --nclient_ports $nclient_ports \
-                         --use_ctrlip 
+                         --use_ctrlip
                     echo
                     ((trial=$trial+1))
 

@@ -133,6 +133,7 @@ class Experiment(object):
         ssh = "ssh -p 22 %s@%s.emulab.net 'cd %s; %s;'" % (self.whoami,
                 self.machine_dict['server-0']['machineid'], self.wdir, serv_cmd)
         self.printer("Launching server process: %s" % serv_cmd)
+        sys.stdout.flush()
         server = subprocess.Popen(shlex.split(ssh))
         return server
 
@@ -144,7 +145,6 @@ class Experiment(object):
         for client in self.clients:
             cmd = (self.basecmd + 
                     " -c %d" % self.nserver_threads + 
-                    " -H %s" % self.machine_dict[self.server_addr]['ip'] +
                     " -d %s" % self.outdir + 
                     " -o %s" % self.outfile +
                     " -u %d" % self.expduration + 
@@ -154,11 +154,15 @@ class Experiment(object):
             if not self.unpin_cthreads:
                 cmd += " -i"
             if self.use_ctrlip:
-                cmd += " -m %s" % self.machine_dict[client]['ctrl_ip']
+                cmd += (" -m %s" % self.machine_dict[client]['ctrl_ip'] + 
+                        " -H %s" % self.machine_dict['server-0']['ctrl_ip'])
+            else:
+                cmd += " -H %s" % self.machine_dict[self.server_addr]['ip']
 
             ssh = "ssh -p 22 %s@%s.emulab.net 'cd %s; %s'" % (self.whoami, 
                     self.machine_dict[client]['machineid'], self.wdir, cmd)
             self.printer("Sending command to client %s: %s" % (client, ssh))
+            sys.stdout.flush()
             p = subprocess.Popen(shlex.split(ssh))
             subprocesses.append(p)
         return subprocesses

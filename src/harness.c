@@ -35,7 +35,6 @@ main (int argc, char **argv)
 
     // Thread-specific arguments
     args.host = NULL;
-    args.port = DEFPORT;
 
     args.program_state = startup;
 
@@ -201,13 +200,14 @@ void *
 ThroughputRecorder (void *vargp)
 {
     ProgramArgs *args = (ProgramArgs *)vargp;
-    
+
     if ((out = fopen (args->thread_data[0].tput_outfile, "wb")) == NULL) {
         fprintf (stderr, "Can't open throughput file for output!\n");
         return NULL;
     }
 
     // Do this every (interval) seconds
+    printf ("Getting ready to record throughput\n");
     while (args->program_state != end) {
         record_throughput (args, out);
         if ((PRINT_RETRANSMITS) && args->tr) {
@@ -319,27 +319,6 @@ setup_filenames (ThreadArgs *targs)
 
 
 void
-write_latency_data (ThreadArgs *p, FILE *out, char *pbuf, struct timespec *recvtime)
-{
-    int m; 
-
-    if (p->lbuf_offset > (LBUFSIZE - 41)) {
-        // Flush the buffer to file
-        // 41 is longest possible write
-        fwrite (p->lbuf, 1, p->lbuf_offset, out);
-        memset (p->lbuf, 0, LBUFSIZE);
-        p->lbuf_offset = 0;
-    } else {
-        // There's more capacity in the buffer
-        m = snprintf (p->lbuf + p->lbuf_offset, PSIZE*2, "%s,%lld,%.9ld\n", 
-                pbuf,
-                (long long) recvtime->tv_sec, recvtime->tv_nsec);
-        p->lbuf_offset += m;
-    }
-}
-
-
-void
 debug_print (ThreadArgs *p, int debug_id, const char *format, ...)
 {
     if (debug_id) {
@@ -402,6 +381,7 @@ SignalHandler (int signum) {
         exit (0);
     } else if (signum == SIGTERM) {
         printf ("Oooops got interrupted...\n");
+        fclose(out);
         exit (0);
     }
 }
